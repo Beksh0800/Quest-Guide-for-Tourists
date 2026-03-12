@@ -1,0 +1,64 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function requestorUserPath() {
+      return /databases/(default)/documents/users/$(request.auth.uid);
+    }
+
+    function requestorData() {
+      return firestore.get(requestorUserPath()).data;
+    }
+
+    function requestorIsAdmin() {
+      return isSignedIn() &&
+        firestore.exists(requestorUserPath()) &&
+        (
+          requestorData().isAdmin == true ||
+          requestorData().role == 'admin'
+        );
+    }
+
+    function isValidEvidenceUpload() {
+      return request.resource != null &&
+        request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+    }
+
+    // cloud evidence v1 path:
+    // quest_evidence/{uid}/{questId}/{taskId}/{filename}
+    match /quest_evidence/{uid}/{questId}/{taskId}/{fileName} {
+      allow read: if isSignedIn() &&
+        (
+          request.auth.uid == uid ||
+          requestorIsAdmin()
+        );
+
+      allow write: if isSignedIn() &&
+        (
+          // create/update evidence файла — только владелец и только image + size лимит
+          (
+            request.resource != null &&
+            request.auth.uid == uid &&
+            isValidEvidenceUpload()
+          ) ||
+          // delete evidence файла — владелец или админ
+          (
+            request.resource == null &&
+            (
+              request.auth.uid == uid ||
+              requestorIsAdmin()
+            )
+          )
+        );
+    }
+
+    // Явный deny для всех остальных путей.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

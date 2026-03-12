@@ -1,0 +1,29 @@
+{
+    "firestore": {
+        "rules": "firestore.rules",
+        "indexes": "firestore.indexes.json"
+    },
+    "flutter": {
+        "platforms": {
+            "android": {
+                "default": {
+                    "projectId": "quest-guide-for-tourists",
+                    "appId": "1:381376292200:android:87956a6645afcbef38e2dd",
+                    "fileOutput": "android/app/google-services.json"
+                }
+            },
+            "dart": {
+                "lib/firebase_options.dart": {
+                    "projectId": "quest-guide-for-tourists",
+                    "configurations": {
+                        "android": "1:381376292200:android:87956a6645afcbef38e2dd",
+                        "ios": "1:381376292200:ios:d0d463c632740faf38e2dd",
+                        "macos": "1:381376292200:ios:d0d463c632740faf38e2dd",
+                        "web": "1:381376292200:web:c1402b62c54a35d338e2dd",
+                        "windows": "1:381376292200:web:83aa6869f4e10ae538e2dd"
+                    }
+                }
+            }
+        }
+    }
+}
