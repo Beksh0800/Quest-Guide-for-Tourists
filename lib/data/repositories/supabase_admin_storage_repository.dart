@@ -1,0 +1,89 @@
+import 'dart:io';
+
+import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:quest_guide/data/services/task_evidence_storage.dart';
+import 'package:supabase/supabase.dart';
+
+class SupabaseAdminStorageRepository {
+  final SupabaseClient? _supabaseClient;
+  final String _bucketName;
+
+  SupabaseAdminStorageRepository({
+    SupabaseClient? supabaseClient,
+    String? bucketName,
+  })  : _bucketName = bucketName ?? 'quest_content',
+        _supabaseClient = supabaseClient ?? _initClient();
+
+  static SupabaseClient? _initClient() {
+    final config = SupabaseEvidenceStorageConfig.fromEnvironment();
+    if (config.hasCredentials) {
+      return SupabaseClient(
+        config.supabaseUrl.trim(),
+        config.supabaseAnonKey.trim(),
+      );
+    }
+    return null;
+  }
+
+  /// Picks an image from the gallery and uploads it to the given [folder] inside the bucket.
+  Future<String?> pickAndUploadImage({required String folder}) async {
+    final picker = ImagePicker();
+    final xFile = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 70,
+    );
+
+    if (xFile == null) return null;
+
+    final file = File(xFile.path);
+    if (!await file.exists()) return null;
+
+    return await uploadImage(file, folder: folder);
+  }
+
+  /// Uploads a given [file] to the [folder] inside the bucket and returns the public URL.
+  Future<String?> uploadImage(File file, {required String folder}) async {
+    if (_supabaseClient == null) {
+      throw Exception(
+          'Supabase client is not configured via environment variables.');
+    }
+
+    final extension = p.extension(file.path).toLowerCase();
+    final safeExtension = extension.isNotEmpty ? extension : '.jpg';
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final filename = '$timestamp$safeExtension';
+
+    final remotePath = p.posix.join(folder, filename);
+
+    try {
+      final storage = _supabaseClient.storage.from(_bucketName);
+
+      await storage.uploadBinary(
+        remotePath,
+        await file.readAsBytes(),
+        fileOptions: FileOptions(
+          contentType: _getContentType(safeExtension),
+        ),
+      );
+
+      return storage.getPublicUrl(remotePath);
+    } catch (e) {
+      throw Exception('Failed to upload image: $e');
+    }
+  }
+
+  String _getContentType(String extension) {
+    switch (extension) {
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.png':
+        return 'image/png';
+      case '.webp':
+        return 'image/webp';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+}

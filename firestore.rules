@@ -1,0 +1,133 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function requestorProfilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function requestorProfile() {
+      return get(requestorProfilePath()).data;
+    }
+
+    function requestorIsAdmin() {
+      return isSignedIn() &&
+        exists(requestorProfilePath()) &&
+        (
+          requestorProfile().get('isAdmin', false) == true ||
+          requestorProfile().get('role', 'user') == 'admin'
+        );
+    }
+
+    function isQuestActive(questId) {
+      return get(/databases/$(database)/documents/quests/$(questId)).data.get('isActive', false) == true;
+    }
+
+    function canReadProgressDocument(docData) {
+      return requestorIsAdmin() ||
+        (isSignedIn() && docData.get('userId', '') == request.auth.uid);
+    }
+
+    // users/{uid}
+    // - Пользователь читает/пишет только свой профиль.
+    // - Админ имеет расширенный доступ.
+    // - Эскалация в admin со стороны обычного пользователя блокируется.
+    match /users/{uid} {
+      allow read: if isSelf(uid) || requestorIsAdmin();
+
+      allow create: if requestorIsAdmin() ||
+        (
+          isSelf(uid) &&
+          request.resource.data.get('isAdmin', false) == false &&
+          request.resource.data.get('role', 'user') != 'admin'
+        );
+
+      allow update: if requestorIsAdmin() ||
+        (
+          isSelf(uid) &&
+          request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
+          request.resource.data.get('role', 'user') == resource.data.get('role', 'user')
+        );
+
+      allow delete: if requestorIsAdmin();
+    }
+
+    // leaderboard/{uid}
+    // Публичный для авторизованных read без приватных полей (email и т.д.).
+    match /leaderboard/{uid} {
+      allow read: if isSignedIn();
+
+      allow create, update: if requestorIsAdmin() ||
+        (
+          isSelf(uid) &&
+          request.resource.data.keys().hasOnly([
+            'name',
+            'photoUrl',
+            'totalPoints',
+            'questsCompleted',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if requestorIsAdmin();
+    }
+
+    // achievements
+    match /achievements/{achievementId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if requestorIsAdmin();
+    }
+
+    // quests + subcollections locations/tasks
+    match /quests/{questId} {
+      allow read: if requestorIsAdmin() || resource.data.get('isActive', false) == true;
+      allow create, update, delete: if requestorIsAdmin();
+
+      match /locations/{locationId} {
+        allow read: if requestorIsAdmin() || isQuestActive(questId);
+        allow create, update, delete: if requestorIsAdmin();
+      }
+
+      match /tasks/{taskId} {
+        allow read: if requestorIsAdmin() || isQuestActive(questId);
+        allow create, update, delete: if requestorIsAdmin();
+      }
+    }
+
+    // progress
+    // - Пользователь читает/пишет только свой прогресс.
+    // - Админ имеет расширенный доступ (очередь модерации и approve/reject).
+    // В текущей схеме moderation-поля хранятся внутри taskAnswers map,
+    // поэтому детальная проверка каждого вложенного поля в rules ограничена.
+    match /progress/{progressId} {
+      allow read: if canReadProgressDocument(resource.data);
+
+      allow create: if requestorIsAdmin() ||
+        (
+          isSignedIn() &&
+          request.resource.data.get('userId', '') == request.auth.uid
+        );
+
+      allow update: if requestorIsAdmin() ||
+        (
+          isSignedIn() &&
+          resource.data.get('userId', '') == request.auth.uid &&
+          request.resource.data.get('userId', '') == resource.data.get('userId', '') &&
+          request.resource.data.get('questId', '') == resource.data.get('questId', '')
+        );
+
+      allow delete: if requestorIsAdmin() ||
+        (
+          isSignedIn() &&
+          resource.data.get('userId', '') == request.auth.uid
+        );
+    }
+  }
+}
