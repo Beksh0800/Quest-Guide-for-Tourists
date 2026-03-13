@@ -39,6 +39,9 @@ set
 drop policy if exists "qg_evidence_public_read" on storage.objects;
 drop policy if exists "qg_evidence_anon_upload" on storage.objects;
 drop policy if exists "qg_evidence_anon_delete" on storage.objects;
+drop policy if exists "qg_admin_content_read" on storage.objects;
+drop policy if exists "qg_admin_content_upload" on storage.objects;
+drop policy if exists "qg_admin_content_delete" on storage.objects;
 
 -- Public read (preview via getPublicUrl).
 create policy "qg_evidence_public_read"
@@ -74,6 +77,39 @@ using (
   bucket_id = 'quest-guide-for-tourists'
   and (storage.foldername(name))[1] = 'quest_evidence'
   and array_length(storage.foldername(name), 1) = 4
+  and lower(storage.extension(name)) = any (array['jpg', 'jpeg', 'png', 'webp'])
+);
+
+-- Admin content (visual quest editor):
+-- quests/{filename}, locations/{filename}, tasks/{filename}
+create policy "qg_admin_content_read"
+on storage.objects
+for select
+to public
+using (
+  bucket_id = 'quest-guide-for-tourists'
+  and (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+);
+
+create policy "qg_admin_content_upload"
+on storage.objects
+for insert
+to anon, authenticated
+with check (
+  bucket_id = 'quest-guide-for-tourists'
+  and (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+  and array_length(storage.foldername(name), 1) = 1
+  and lower(storage.extension(name)) = any (array['jpg', 'jpeg', 'png', 'webp'])
+);
+
+create policy "qg_admin_content_delete"
+on storage.objects
+for delete
+to anon, authenticated
+using (
+  bucket_id = 'quest-guide-for-tourists'
+  and (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+  and array_length(storage.foldername(name), 1) = 1
   and lower(storage.extension(name)) = any (array['jpg', 'jpeg', 'png', 'webp'])
 );
 

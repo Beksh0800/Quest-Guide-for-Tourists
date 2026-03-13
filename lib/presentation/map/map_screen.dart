@@ -56,8 +56,11 @@ class _MapScreenState extends State<MapScreen> {
   int _currentStepIndex = 0;
   bool _isOffRoute = false;
   double? _offRouteDistanceMeters;
+  bool _directionsApiUnavailable = false;
 
   bool _voiceEnabled = true;
+  bool _isBottomPanelExpanded = true;
+  String _selectedTravelMode = 'walking'; // 'walking' | 'driving'
 
   @override
   void initState() {
@@ -114,6 +117,7 @@ class _MapScreenState extends State<MapScreen> {
         _activeIndex = activeIndex;
         _loading = false;
         _routeError = null;
+        _directionsApiUnavailable = false;
       });
 
       await _startLocationTracking();
@@ -256,7 +260,7 @@ class _MapScreenState extends State<MapScreen> {
     required NavigationPoint destination,
     required String reason,
   }) async {
-    if (_routeLoading || _locations.isEmpty) return;
+    if (_routeLoading || _locations.isEmpty || _directionsApiUnavailable) return;
 
     final l10n = AppLocalizations.of(context);
 
@@ -276,6 +280,7 @@ class _MapScreenState extends State<MapScreen> {
       final route = await _routingService.fetchWalkingRoute(
         origin: origin,
         destination: destination,
+        travelMode: _selectedTravelMode,
       );
 
       if (!mounted) return;
@@ -313,6 +318,9 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _routeLoading = false;
         _routeError = _localizedRoutingError(e, l10n);
+        if (e.code == RoutingErrorCode.missingApiKey) {
+          _directionsApiUnavailable = true;
+        }
       });
     } catch (_) {
       if (!mounted) return;
@@ -620,7 +628,7 @@ class _MapScreenState extends State<MapScreen> {
 
     final target = _locations[_activeIndex];
     final uri = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1&destination=${target.latitude},${target.longitude}&travelmode=walking',
+      'https://www.google.com/maps/dir/?api=1&destination=${target.latitude},${target.longitude}&travelmode=$_selectedTravelMode',
     );
 
     await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -694,6 +702,44 @@ class _MapScreenState extends State<MapScreen> {
     _voiceService.setEnabled(_voiceEnabled);
     if (!_voiceEnabled) {
       unawaited(_voiceService.stop());
+    }
+  }
+
+  Future<void> _zoomIn() async {
+    await _mapController?.animateCamera(CameraUpdate.zoomIn());
+  }
+
+  Future<void> _zoomOut() async {
+    await _mapController?.animateCamera(CameraUpdate.zoomOut());
+  }
+
+  void _toggleBottomPanel() {
+    setState(() {
+      _isBottomPanelExpanded = !_isBottomPanelExpanded;
+    });
+  }
+
+  void _setTravelMode(String mode) {
+    if (_selectedTravelMode == mode) return;
+    setState(() {
+      _selectedTravelMode = mode;
+      _activeRoute = null;
+      _currentStepIndex = 0;
+      _isOffRoute = false;
+      _routeError = null;
+    });
+    if (_currentPosition != null && _locations.isNotEmpty) {
+      final current = _positionToPoint(_currentPosition!);
+      final target = _locations[_activeIndex];
+      final destination = NavigationPoint(
+        latitude: target.latitude,
+        longitude: target.longitude,
+      );
+      unawaited(_requestRoadRoute(
+        origin: current,
+        destination: destination,
+        reason: 'initial',
+      ));
     }
   }
 
@@ -998,75 +1044,189 @@ class _MapScreenState extends State<MapScreen> {
             polylines: _buildPolylines(),
           ),
           Positioned(
+            right: 12,
+            top: 12,
+            child: SafeArea(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.surface.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.divider),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    IconButton(
+                      tooltip: 'Увеличить карту',
+                      onPressed: _zoomIn,
+                      icon: const Icon(Icons.add_rounded),
+                    ),
+                    const Divider(height: 1),
+                    IconButton(
+                      tooltip: 'Уменьшить карту',
+                      onPressed: _zoomOut,
+                      icon: const Icon(Icons.remove_rounded),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
             left: 12,
             right: 12,
             bottom: 12,
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: AppColors.divider),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.08),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    l10n.pointOf(_activeIndex + 1, _locations.length),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(target.name,
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 6),
-                  _buildRouteSummary(l10n),
-                  const SizedBox(height: 8),
-                  _buildRouteStatusBanners(l10n),
-                  _buildTurnByTurnCard(l10n),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: canStartTask ? _goToTask : null,
-                          icon: const Icon(Icons.task_alt_rounded),
-                          label: Text(
-                            canStartTask ? l10n.doTask : l10n.moveCloser,
+            child: GestureDetector(
+              onVerticalDragEnd: (details) {
+                final velocity = details.primaryVelocity ?? 0;
+                if (velocity > 200 && _isBottomPanelExpanded) {
+                  _toggleBottomPanel();
+                } else if (velocity < -200 && !_isBottomPanelExpanded) {
+                  _toggleBottomPanel();
+                }
+              },
+              child: AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: AppColors.divider),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                  child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Drag handle
+                    GestureDetector(
+                      onTap: _toggleBottomPanel,
+                      child: Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 10),
+                          decoration: BoxDecoration(
+                            color: AppColors.divider,
+                            borderRadius: BorderRadius.circular(999),
                           ),
                         ),
                       ),
-                      if (kDebugMode) ...[
-                        const SizedBox(width: 8),
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                l10n.pointOf(_activeIndex + 1, _locations.length),
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: AppColors.textSecondary,
+                                    ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                target.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Travel mode selector
+                        _TravelModeToggle(
+                          selectedMode: _selectedTravelMode,
+                          onModeSelected: _setTravelMode,
+                        ),
                         IconButton(
-                          onPressed: _skipToTaskInDebug,
-                          tooltip: l10n.devBypass,
+                          onPressed: _toggleBottomPanel,
+                          tooltip: _isBottomPanelExpanded
+                              ? 'Свернуть панель'
+                              : 'Развернуть панель',
                           icon: Icon(
-                            _devOverride
-                                ? Icons.lock_open_rounded
-                                : Icons.lock_rounded,
+                            _isBottomPanelExpanded
+                                ? Icons.keyboard_arrow_down_rounded
+                                : Icons.keyboard_arrow_up_rounded,
                           ),
                         ),
                       ],
+                    ),
+                    if (!_isBottomPanelExpanded)
+                      Text(
+                        'Потяните вверх или нажмите стрелку для деталей',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                      ),
+                    if (_isBottomPanelExpanded) ...[
+                      const SizedBox(height: 6),
+                      _buildRouteSummary(l10n),
+                      const SizedBox(height: 8),
+                      _buildRouteStatusBanners(l10n),
+                      _buildTurnByTurnCard(l10n),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: canStartTask ? _goToTask : null,
+                              icon: const Icon(Icons.task_alt_rounded),
+                              label: Text(
+                                canStartTask ? l10n.doTask : l10n.moveCloser,
+                              ),
+                            ),
+                          ),
+                          if (kDebugMode) ...[
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: _skipToTaskInDebug,
+                              tooltip: l10n.devBypass,
+                              icon: Icon(
+                                _devOverride
+                                    ? Icons.lock_open_rounded
+                                    : Icons.lock_rounded,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      // Compact fallback — smaller, less prominent
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _openExternalNavigation,
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.textSecondary,
+                            textStyle: Theme.of(context).textTheme.labelSmall,
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                          label: Text(l10n.mapOpenGoogleMapsFallback),
+                        ),
+                      ),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: _openExternalNavigation,
-                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                    label: Text(l10n.mapOpenGoogleMapsFallback),
-                  ),
-                ],
+                  ],
+                ),
               ),
+            ),
             ),
           ),
         ],
@@ -1074,3 +1234,87 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 }
+
+/// Compact toggle для выбора режима маршрута: пешком / на авто.
+class _TravelModeToggle extends StatelessWidget {
+  final String selectedMode;
+  final ValueChanged<String> onModeSelected;
+
+  const _TravelModeToggle({
+    required this.selectedMode,
+    required this.onModeSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.divider),
+      ),
+      padding: const EdgeInsets.all(2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ModeButton(
+            icon: Icons.directions_walk_rounded,
+            mode: 'walking',
+            selectedMode: selectedMode,
+            onTap: onModeSelected,
+            tooltip: 'Пешком',
+          ),
+          const SizedBox(width: 2),
+          _ModeButton(
+            icon: Icons.directions_car_rounded,
+            mode: 'driving',
+            selectedMode: selectedMode,
+            onTap: onModeSelected,
+            tooltip: 'На авто',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModeButton extends StatelessWidget {
+  final IconData icon;
+  final String mode;
+  final String selectedMode;
+  final ValueChanged<String> onTap;
+  final String tooltip;
+
+  const _ModeButton({
+    required this.icon,
+    required this.mode,
+    required this.selectedMode,
+    required this.onTap,
+    required this.tooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isSelected = mode == selectedMode;
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: () => onTap(mode),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: 18,
+            color: isSelected ? Colors.white : AppColors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+

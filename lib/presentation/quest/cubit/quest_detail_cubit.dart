@@ -10,6 +10,7 @@ import 'package:quest_guide/presentation/quest/cubit/quest_detail_state.dart';
 class QuestDetailCubit extends Cubit<QuestDetailState> {
   final QuestRepository _questRepository;
   final ProgressRepository _progressRepository;
+  int _activeRequestId = 0;
 
   QuestDetailCubit({
     required QuestRepository questRepository,
@@ -20,11 +21,12 @@ class QuestDetailCubit extends Cubit<QuestDetailState> {
 
   /// Загрузить квест с точками и заданиями
   Future<void> loadQuest(String questId) async {
-    emit(const QuestDetailLoading());
+    final requestId = ++_activeRequestId;
+    _emitIfActive(requestId, const QuestDetailLoading());
     try {
       final quest = await _questRepository.getQuestById(questId);
       if (quest == null) {
-        emit(const QuestDetailError('quest_not_found'));
+        _emitIfActive(requestId, const QuestDetailError('quest_not_found'));
         return;
       }
 
@@ -44,7 +46,7 @@ class QuestDetailCubit extends Cubit<QuestDetailState> {
         questId: questId,
       );
 
-      emit(QuestDetailLoaded(
+      _emitIfActive(requestId, QuestDetailLoaded(
         quest: quest,
         locations: locations,
         tasks: tasks,
@@ -52,8 +54,15 @@ class QuestDetailCubit extends Cubit<QuestDetailState> {
         activeProgress: activeProgress,
       ));
     } catch (e) {
-      emit(QuestDetailError('load_error:$e'));
+      _emitIfActive(requestId, QuestDetailError('load_error:$e'));
     }
+  }
+
+  void _emitIfActive(int requestId, QuestDetailState state) {
+    if (isClosed || requestId != _activeRequestId) {
+      return;
+    }
+    emit(state);
   }
 
   QuestCatalogStatus _resolveQuestStatus({

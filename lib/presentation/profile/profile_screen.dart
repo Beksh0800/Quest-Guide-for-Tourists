@@ -451,9 +451,16 @@ class _LeaderboardSectionState extends State<_LeaderboardSection> {
   }
 
   Future<_LeaderboardData> _loadLeaderboard() async {
-    final topUsers = await _userRepository.getTopUsers(limit: 5);
-    final currentRank = await _userRepository.getUserRank(widget.userId);
-    final currentUser = await _userRepository.getUserById(widget.userId);
+    // Три запроса запускаются параллельно
+    final results = await Future.wait([
+      _userRepository.getTopUsers(limit: 5),
+      _userRepository.getUserRank(widget.userId),
+      _userRepository.getUserById(widget.userId),
+    ]);
+
+    final topUsers = results[0] as List<UserModel>;
+    final currentRank = results[1] as int?;
+    final currentUser = results[2] as UserModel?;
 
     return _LeaderboardData(
       topUsers: topUsers,

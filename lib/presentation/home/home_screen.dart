@@ -274,16 +274,15 @@ class _QuestCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Изображение / placeholder
-            Container(
-              height: 140,
-              decoration: BoxDecoration(
-                color: _accentColor.withValues(alpha: 0.15),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Center(
-                child:
-                    Icon(Icons.explore_rounded, size: 54, color: _accentColor),
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              child: SizedBox(
+                height: 140,
+                width: double.infinity,
+                child: _QuestCardCover(
+                  imageUrl: quest.imageUrl,
+                  accentColor: _accentColor,
+                ),
               ),
             ),
             Padding(
@@ -427,6 +426,56 @@ class _QuestCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _QuestCardCover extends StatelessWidget {
+  final String imageUrl;
+  final Color accentColor;
+
+  const _QuestCardCover({
+    required this.imageUrl,
+    required this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final url = imageUrl.trim();
+    if (url.isEmpty) {
+      return _buildFallback();
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.network(
+          url,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildFallback(),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent,
+                Colors.black.withValues(alpha: 0.25),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFallback() {
+    return ColoredBox(
+      color: accentColor.withValues(alpha: 0.15),
+      child: Center(
+        child: Icon(Icons.explore_rounded, size: 54, color: accentColor),
       ),
     );
   }

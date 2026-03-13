@@ -86,6 +86,7 @@ class GoogleDirectionsRoutingService implements RoadRoutingService {
   Future<NavigationRoute> fetchWalkingRoute({
     required NavigationPoint origin,
     required NavigationPoint destination,
+    String travelMode = 'walking',
   }) async {
     if (!_config.hasApiKey) {
       throw const RoutingServiceException(
@@ -99,7 +100,7 @@ class GoogleDirectionsRoutingService implements RoadRoutingService {
       queryParameters: {
         'origin': '${origin.latitude},${origin.longitude}',
         'destination': '${destination.latitude},${destination.longitude}',
-        'mode': _config.travelMode,
+        'mode': travelMode,
         'language': _config.languageCode,
         'key': _config.resolvedApiKey,
       },
