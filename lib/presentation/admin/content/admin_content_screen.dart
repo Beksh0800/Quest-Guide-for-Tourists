@@ -113,6 +113,68 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
     }
   }
 
+  Future<void> _showQuestDetails(Quest quest) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        final l10n = AppLocalizations.of(context);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Подробности квеста',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildDetailLine('Название', quest.title),
+                  _buildDetailLine('ID', quest.id),
+                  _buildDetailLine('Город', quest.city),
+                  _buildDetailLine(
+                    'Статус',
+                    quest.isActive
+                        ? l10n.adminStatusActive
+                        : l10n.adminStatusDraft,
+                  ),
+                  _buildDetailLine(
+                    'Описание',
+                    quest.description.trim().isEmpty
+                        ? 'Описание не заполнено'
+                        : quest.description,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDetailLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: RichText(
+        text: TextSpan(
+          style: Theme.of(context).textTheme.bodyMedium,
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            TextSpan(text: value),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
@@ -210,6 +272,8 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
                             children: [
                               Text(
                                 quest.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.titleMedium,
                               ),
                               const SizedBox(height: 4),
@@ -294,22 +358,63 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _openEditor(quest.id),
-                            icon: const Icon(Icons.edit_outlined),
-                            label: Text(l10n.adminEditQuest),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 420;
+
+                        final detailsButton = TextButton.icon(
+                          onPressed: () => _showQuestDetails(quest),
+                          icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                          label: const Text('Подробнее'),
+                        );
+
+                        final editButton = OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton.filledTonal(
+                          onPressed: () => _openEditor(quest.id),
+                          icon: const Icon(Icons.edit_outlined),
+                          label: Text(l10n.adminEditQuest),
+                        );
+
+                        final deleteButton = IconButton.filledTonal(
                           onPressed: () => _deleteQuest(quest),
                           icon: const Icon(Icons.delete_outline_rounded),
                           color: AppColors.error,
-                        ),
-                      ],
+                        );
+
+                        if (compact) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              detailsButton,
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  const Spacer(),
+                                  Flexible(child: editButton),
+                                  const SizedBox(width: 8),
+                                  deleteButton,
+                                ],
+                              ),
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            detailsButton,
+                            const Spacer(),
+                            Flexible(child: editButton),
+                            const SizedBox(width: 8),
+                            deleteButton,
+                          ],
+                        );
+                      },
                     ),
                   ],
                 ),

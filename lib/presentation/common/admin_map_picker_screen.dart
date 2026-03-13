@@ -7,10 +7,12 @@ import 'package:quest_guide/presentation/common/premium_button.dart';
 
 class AdminMapPickerScreen extends StatefulWidget {
   final LatLng initialPosition;
+  final LatLng? cityCenter;
 
   const AdminMapPickerScreen({
     super.key,
     required this.initialPosition,
+    this.cityCenter,
   });
 
   @override
@@ -34,10 +36,10 @@ class _AdminMapPickerScreenState extends State<AdminMapPickerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Если начальная точка 0.0, 0.0, по умолчанию ставим Астану.
+    // Если локация еще не выбрана, открываем карту на центре выбранного города.
     final initialTarget = (_selectedPosition.latitude == 0.0 &&
             _selectedPosition.longitude == 0.0)
-        ? const LatLng(51.169392, 71.449074)
+        ? (widget.cityCenter ?? const LatLng(51.169392, 71.449074))
         : _selectedPosition;
 
     return Scaffold(

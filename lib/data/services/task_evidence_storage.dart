@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -215,7 +216,7 @@ class LocalTaskEvidenceStorage implements TaskEvidenceStorage {
 
 /// Runtime-конфиг для Supabase Storage evidence upload.
 ///
-/// Значения читаются из --dart-define:
+/// Значения читаются из .env, затем fallback на --dart-define:
 /// - SUPABASE_URL
 /// - SUPABASE_ANON_KEY
 /// - SUPABASE_STORAGE_BUCKET
@@ -236,10 +237,18 @@ class SupabaseEvidenceStorageConfig {
   });
 
   factory SupabaseEvidenceStorageConfig.fromEnvironment() {
-    return const SupabaseEvidenceStorageConfig(
-      supabaseUrl: String.fromEnvironment(supabaseUrlDefineKey),
-      supabaseAnonKey: String.fromEnvironment(supabaseAnonKeyDefineKey),
-      storageBucket: String.fromEnvironment(supabaseStorageBucketDefineKey),
+    final envUrl = (dotenv.env[supabaseUrlDefineKey] ?? '').trim();
+    final envAnonKey = (dotenv.env[supabaseAnonKeyDefineKey] ?? '').trim();
+    final envBucket = (dotenv.env[supabaseStorageBucketDefineKey] ?? '').trim();
+
+    const defineUrl = String.fromEnvironment(supabaseUrlDefineKey);
+    const defineAnonKey = String.fromEnvironment(supabaseAnonKeyDefineKey);
+    const defineBucket = String.fromEnvironment(supabaseStorageBucketDefineKey);
+
+    return SupabaseEvidenceStorageConfig(
+      supabaseUrl: envUrl.isNotEmpty ? envUrl : defineUrl,
+      supabaseAnonKey: envAnonKey.isNotEmpty ? envAnonKey : defineAnonKey,
+      storageBucket: envBucket.isNotEmpty ? envBucket : defineBucket,
     );
   }
 

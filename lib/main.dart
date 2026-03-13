@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:quest_guide/core/di/app_router.dart';
 import 'package:quest_guide/core/l10n/app_localizations.dart';
@@ -20,11 +21,28 @@ void main() async {
   debugPrint('✓ WidgetsFlutterBinding initialized');
 
   try {
+    await dotenv.load(fileName: '.env');
+    debugPrint('✓ .env loaded');
+  } catch (e) {
+    debugPrint('⚠ .env loading failed: $e');
+  }
+
+  var firebaseReady = false;
+  try {
     await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform);
+    firebaseReady = true;
     debugPrint('✓ Firebase initialized successfully');
   } catch (e) {
     debugPrint('✗ Firebase initialization failed: $e');
+  }
+
+  if (!firebaseReady) {
+    runApp(const _FatalStartupApp(
+      message:
+          'Не удалось инициализировать Firebase. Проверьте .env и настройки Firebase.',
+    ));
+    return;
   }
 
   try {
@@ -56,6 +74,31 @@ void main() async {
     runApp(QuestGuideApp(authService: authService, router: router));
   } catch (e) {
     debugPrint('✗ App initialization failed: $e');
+    runApp(_FatalStartupApp(message: 'Ошибка запуска приложения: $e'));
+  }
+}
+
+class _FatalStartupApp extends StatelessWidget {
+  final String message;
+
+  const _FatalStartupApp({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

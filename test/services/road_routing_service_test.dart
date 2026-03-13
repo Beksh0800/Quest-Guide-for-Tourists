@@ -5,7 +5,7 @@ import 'package:quest_guide/data/services/road_routing_service.dart';
 import 'package:quest_guide/domain/models/navigation_route.dart';
 
 void main() {
-  group('GoogleDirectionsRoutingService.fetchWalkingRoute', () {
+  group('GoogleDirectionsRoutingService routing', () {
     test('parses route and steps from successful Directions response',
         () async {
       final mockClient = MockClient((request) async {
@@ -72,6 +72,35 @@ void main() {
       expect(route.steps.first.instruction, 'Turn right to the park');
       expect(route.steps.first.distanceMeters, 300);
       expect(route.steps.first.maneuver, 'turn-right');
+    });
+
+    test('fetchWalkingRoute sends selected travel mode', () async {
+      final mockClient = MockClient((request) async {
+        expect(request.url.queryParameters['mode'], 'driving');
+
+        return http.Response(
+          '{"status":"OK","routes":[{"overview_polyline":{"points":"_p~iF~ps|U_ulLnnqC_mqNvxq`@"},"legs":[{"distance":{"value":500},"duration":{"value":120},"steps":[]}]}]}',
+          200,
+        );
+      });
+
+      final service = GoogleDirectionsRoutingService(
+        config: const GoogleDirectionsRoutingConfig(
+          directionsApiKey: 'test-key',
+          fallbackGoogleApiKey: '',
+        ),
+        httpClient: mockClient,
+      );
+
+      final route = await service.fetchWalkingRoute(
+        origin: const NavigationPoint(latitude: 43.2380, longitude: 76.8850),
+        destination:
+            const NavigationPoint(latitude: 43.2400, longitude: 76.9000),
+        travelMode: 'driving',
+      );
+
+      expect(route.distanceMeters, 500);
+      expect(route.durationSeconds, 120);
     });
 
     test('throws missingApiKey when config has no credentials', () async {

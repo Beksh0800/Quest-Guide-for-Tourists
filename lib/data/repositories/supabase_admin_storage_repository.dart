@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
@@ -8,12 +9,25 @@ import 'package:supabase/supabase.dart';
 class SupabaseAdminStorageRepository {
   final SupabaseClient? _supabaseClient;
   final String _bucketName;
+  final Random _random = Random();
 
   SupabaseAdminStorageRepository({
     SupabaseClient? supabaseClient,
     String? bucketName,
-  })  : _bucketName = bucketName ?? 'quest_content',
+  })  : _bucketName = _resolveBucketName(bucketName),
         _supabaseClient = supabaseClient ?? _initClient();
+
+  static String _resolveBucketName(String? providedBucketName) {
+    final configured =
+        SupabaseEvidenceStorageConfig.fromEnvironment().storageBucket.trim();
+    if (providedBucketName != null && providedBucketName.trim().isNotEmpty) {
+      return providedBucketName.trim();
+    }
+    if (configured.isNotEmpty) {
+      return configured;
+    }
+    return 'quest_content';
+  }
 
   static SupabaseClient? _initClient() {
     final config = SupabaseEvidenceStorageConfig.fromEnvironment();
@@ -32,6 +46,8 @@ class SupabaseAdminStorageRepository {
     final xFile = await picker.pickImage(
       source: ImageSource.gallery,
       imageQuality: 70,
+      maxWidth: 2048,
+      maxHeight: 2048,
     );
 
     if (xFile == null) return null;
@@ -51,8 +67,9 @@ class SupabaseAdminStorageRepository {
 
     final extension = p.extension(file.path).toLowerCase();
     final safeExtension = extension.isNotEmpty ? extension : '.jpg';
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final filename = '$timestamp$safeExtension';
+    final timestamp = DateTime.now().microsecondsSinceEpoch;
+    final randomSuffix = _random.nextInt(1 << 20).toRadixString(16);
+    final filename = '${timestamp}_$randomSuffix$safeExtension';
 
     final remotePath = p.posix.join(folder, filename);
 
@@ -64,11 +81,33 @@ class SupabaseAdminStorageRepository {
         await file.readAsBytes(),
         fileOptions: FileOptions(
           contentType: _getContentType(safeExtension),
+          upsert: true,
         ),
       );
 
       return storage.getPublicUrl(remotePath);
+    } on StorageException catch (e) {
+      final errorText = (e.message).toLowerCase();
+      final isUnauthorized = e.statusCode == '403' ||
+          errorText.contains('unauthorized') ||
+          errorText.contains('forbidden');
+      final isRls = errorText.contains('row-level security');
+      if (isUnauthorized || isRls) {
+        throw Exception(
+          'Нет прав на загрузку в Supabase Storage (403). Проверьте RLS policy для bucket "$_bucketName" и папки "$folder".',
+        );
+      }
+      throw Exception('Ошибка загрузки в Storage: ${e.message}');
     } catch (e) {
+      final errorText = e.toString().toLowerCase();
+      final isUnauthorized =
+          errorText.contains('403') || errorText.contains('unauthorized');
+      final isRls = errorText.contains('row-level security');
+      if (isUnauthorized || isRls) {
+        throw Exception(
+          'Нет прав на загрузку в Supabase Storage (403). Проверьте RLS policy для bucket "$_bucketName" и папки "$folder".',
+        );
+      }
       throw Exception('Failed to upload image: $e');
     }
   }
