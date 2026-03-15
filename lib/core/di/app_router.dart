@@ -89,6 +89,13 @@ class AppRouter {
         }
 
         final isAdmin = await authService.isCurrentUserAdmin();
+        if (isAdmin && path == AppRoutes.adminModerationQueue) {
+          final isSuperuser = await authService.isCurrentUserSuperuser();
+          if (!isSuperuser) {
+            return AppRoutes.profileAdminDeniedLocation;
+          }
+        }
+
         return resolveRedirectTarget(
           loggedIn: loggedIn,
           isAuthRoute: false,

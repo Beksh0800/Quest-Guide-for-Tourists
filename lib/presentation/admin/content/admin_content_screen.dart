@@ -18,6 +18,7 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
 
   late Future<List<Quest>> _questsFuture;
   bool _createInProgress = false;
+  String? _openingQuestId;
 
   @override
   void initState() {
@@ -32,10 +33,24 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
   }
 
   Future<void> _openEditor(String questId) async {
+    if (_openingQuestId != null) return;
+
+    setState(() {
+      _openingQuestId = questId;
+    });
+
     final route = AppRoutes.adminQuestEditor.replaceFirst(':questId', questId);
-    await context.push(route);
-    if (!mounted) return;
-    _reload();
+    try {
+      await context.push(route);
+      if (!mounted) return;
+      _reload();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _openingQuestId = null;
+        });
+      }
+    }
   }
 
   Future<void> _createDraftQuest() async {
@@ -113,67 +128,7 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
     }
   }
 
-  Future<void> _showQuestDetails(Quest quest) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) {
-        final l10n = AppLocalizations.of(context);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Подробности квеста',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 12),
-                  _buildDetailLine('Название', quest.title),
-                  _buildDetailLine('ID', quest.id),
-                  _buildDetailLine('Город', quest.city),
-                  _buildDetailLine(
-                    'Статус',
-                    quest.isActive
-                        ? l10n.adminStatusActive
-                        : l10n.adminStatusDraft,
-                  ),
-                  _buildDetailLine(
-                    'Описание',
-                    quest.description.trim().isEmpty
-                        ? 'Описание не заполнено'
-                        : quest.description,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildDetailLine(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: RichText(
-        text: TextSpan(
-          style: Theme.of(context).textTheme.bodyMedium,
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            TextSpan(text: value),
-          ],
-        ),
-      ),
-    );
-  }
+  // Popup "Подробнее" intentionally removed: list uses direct actions only.
 
   @override
   Widget build(BuildContext context) {
@@ -245,6 +200,7 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
             itemBuilder: (context, index) {
               final quest = quests[index];
               final difficultyColor = _difficultyColor(quest.difficulty);
+              final isOpeningQuest = _openingQuestId == quest.id;
 
               return Container(
                 padding: const EdgeInsets.all(14),
@@ -358,63 +314,53 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final compact = constraints.maxWidth < 420;
-
-                        final detailsButton = TextButton.icon(
-                          onPressed: () => _showQuestDetails(quest),
-                          icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                          label: const Text('Подробнее'),
-                        );
-
-                        final editButton = OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(0, 40),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(0, 44),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                            ),
+                            onPressed: isOpeningQuest
+                                ? null
+                                : () => _openEditor(quest.id),
+                            icon: isOpeningQuest
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.edit_outlined),
+                            label: Text(
+                              isOpeningQuest ? l10n.loading : l10n.adminEditQuest,
                             ),
                           ),
-                          onPressed: () => _openEditor(quest.id),
-                          icon: const Icon(Icons.edit_outlined),
-                          label: Text(l10n.adminEditQuest),
-                        );
-
-                        final deleteButton = IconButton.filledTonal(
-                          onPressed: () => _deleteQuest(quest),
-                          icon: const Icon(Icons.delete_outline_rounded),
-                          color: AppColors.error,
-                        );
-
-                        if (compact) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              detailsButton,
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  const Spacer(),
-                                  Flexible(child: editButton),
-                                  const SizedBox(width: 8),
-                                  deleteButton,
-                                ],
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(0, 44),
+                              side: const BorderSide(color: AppColors.error),
+                              foregroundColor: AppColors.error,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
                               ),
-                            ],
-                          );
-                        }
-
-                        return Row(
-                          children: [
-                            detailsButton,
-                            const Spacer(),
-                            Flexible(child: editButton),
-                            const SizedBox(width: 8),
-                            deleteButton,
-                          ],
-                        );
-                      },
+                            ),
+                            onPressed: () => _deleteQuest(quest),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                            label: Text(l10n.adminDeleteQuest),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

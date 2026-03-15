@@ -14,6 +14,11 @@ class UserModel extends Equatable {
   final List<String> earnedBadgeIds;
   final String language; // 'ru' или 'kz'
   final DateTime createdAt;
+  
+  // Новые метрики для достижений
+  final int photosUploaded;
+  final List<String> visitedCities;
+  final int reviewsLeft;
 
   const UserModel({
     required this.id,
@@ -27,6 +32,9 @@ class UserModel extends Equatable {
     this.earnedBadgeIds = const [],
     this.language = 'ru',
     required this.createdAt,
+    this.photosUploaded = 0,
+    this.visitedCities = const [],
+    this.reviewsLeft = 0,
   });
 
   /// Из Firestore документа
@@ -34,7 +42,7 @@ class UserModel extends Equatable {
     final roleRaw = map['role'] as String?;
     final role = roleRaw?.trim().toLowerCase();
     final isAdminFlag = map['isAdmin'] == true;
-    final hasAdminRole = AccessControl.isAdminRole(role);
+    final hasAdminRole = AccessControl.isAdminRole(role) || AccessControl.isSuperuserRole(role);
 
     return UserModel(
       id: id,
@@ -49,6 +57,9 @@ class UserModel extends Equatable {
       earnedBadgeIds: List<String>.from(map['earnedBadgeIds'] ?? []),
       language: map['language'] as String? ?? 'ru',
       createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
+      photosUploaded: map['photosUploaded'] as int? ?? 0,
+      visitedCities: List<String>.from(map['visitedCities'] ?? []),
+      reviewsLeft: map['reviewsLeft'] as int? ?? 0,
     );
   }
 
@@ -65,6 +76,9 @@ class UserModel extends Equatable {
       'earnedBadgeIds': earnedBadgeIds,
       'language': language,
       'createdAt': createdAt.toIso8601String(),
+      'photosUploaded': photosUploaded,
+      'visitedCities': visitedCities,
+      'reviewsLeft': reviewsLeft,
     };
   }
 
@@ -78,6 +92,9 @@ class UserModel extends Equatable {
     int? questsCompleted,
     List<String>? earnedBadgeIds,
     String? language,
+    int? photosUploaded,
+    List<String>? visitedCities,
+    int? reviewsLeft,
   }) {
     return UserModel(
       id: id,
@@ -91,6 +108,9 @@ class UserModel extends Equatable {
       earnedBadgeIds: earnedBadgeIds ?? this.earnedBadgeIds,
       language: language ?? this.language,
       createdAt: createdAt,
+      photosUploaded: photosUploaded ?? this.photosUploaded,
+      visitedCities: visitedCities ?? this.visitedCities,
+      reviewsLeft: reviewsLeft ?? this.reviewsLeft,
     );
   }
 
@@ -106,5 +126,8 @@ class UserModel extends Equatable {
         questsCompleted,
         earnedBadgeIds,
         language,
+        photosUploaded,
+        visitedCities,
+        reviewsLeft,
       ];
 }

@@ -22,8 +22,15 @@ service cloud.firestore {
         exists(requestorProfilePath()) &&
         (
           requestorProfile().get('isAdmin', false) == true ||
-          requestorProfile().get('role', 'user') == 'admin'
+          requestorProfile().get('role', 'user') == 'admin' ||
+          requestorProfile().get('role', 'user') == 'superuser'
         );
+    }
+
+    function requestorIsSuperuser() {
+      return isSignedIn() &&
+        exists(requestorProfilePath()) &&
+        requestorProfile().get('role', 'user') == 'superuser';
     }
 
     function isQuestActive(questId) {
@@ -38,7 +45,8 @@ service cloud.firestore {
     // users/{uid}
     // - Пользователь читает/пишет только свой профиль.
     // - Админ имеет расширенный доступ.
-    // - Эскалация в admin со стороны обычного пользователя блокируется.
+    // - Эскалация в admin/superuser со стороны обычного пользователя блокируется.
+    // - Только superuser может изменять роли.
     match /users/{uid} {
       allow read: if isSelf(uid) || requestorIsAdmin();
 
@@ -46,17 +54,23 @@ service cloud.firestore {
         (
           isSelf(uid) &&
           request.resource.data.get('isAdmin', false) == false &&
-          request.resource.data.get('role', 'user') != 'admin'
+          request.resource.data.get('role', 'user') != 'admin' &&
+          request.resource.data.get('role', 'user') != 'superuser'
         );
 
-      allow update: if requestorIsAdmin() ||
+      allow update: if requestorIsSuperuser() ||
+        (
+          requestorIsAdmin() && 
+          request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
+          request.resource.data.get('role', 'user') == resource.data.get('role', 'user')
+        ) ||
         (
           isSelf(uid) &&
           request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
           request.resource.data.get('role', 'user') == resource.data.get('role', 'user')
         );
 
-      allow delete: if requestorIsAdmin();
+      allow delete: if requestorIsSuperuser();
     }
 
     // leaderboard/{uid}

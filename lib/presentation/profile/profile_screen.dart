@@ -27,11 +27,13 @@ class ProfileScreen extends StatelessWidget {
               isAdminFlag: user.isAdmin,
               role: user.role,
             );
+        final isSuperuser =
+            user != null && AccessControl.isSuperuserRole(user.role);
 
         // Временная отладка - выводим статус админа в консоль
         if (user != null) {
           debugPrint(
-              'User: ${user.name}, isAdmin: ${user.isAdmin}, role: ${user.role}, hasAdminAccess: $isAdmin');
+              'User: ${user.name}, isAdmin: ${user.isAdmin}, role: ${user.role}, hasAdminAccess: $isAdmin, isSuperuser: $isSuperuser');
         }
         final deniedByRouter = GoRouterState.of(context)
                 .uri
@@ -45,7 +47,7 @@ class ProfileScreen extends StatelessWidget {
               actions: [
                 IconButton(
                     icon: const Icon(Icons.settings_outlined),
-                    onPressed: () {}),
+                    onPressed: () => _showLanguageDialog(context)),
               ],
             ),
             SliverToBoxAdapter(
@@ -114,7 +116,27 @@ class ProfileScreen extends StatelessWidget {
                       user?.email ?? '',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
-                    if (isAdmin) ...[
+                    if (isSuperuser) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.accent.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: AppColors.accent.withValues(alpha: 0.3)),
+                        ),
+                        child: Text(
+                          '👑 Суперпользователь',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.accent,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                        ),
+                      ),
+                    ] else if (isAdmin) ...[
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -197,13 +219,14 @@ class ProfileScreen extends StatelessWidget {
                                   .adminContentTitle,
                               onTap: () => context.push(AppRoutes.adminContent),
                             ),
-                            _MenuItem(
-                              icon: Icons.fact_check_outlined,
-                              title: AppLocalizations.of(context)
-                                  .adminModerationQueueOpen,
-                              onTap: () =>
-                                  context.push(AppRoutes.adminModerationQueue),
-                            ),
+                            if (isSuperuser)
+                              _MenuItem(
+                                icon: Icons.fact_check_outlined,
+                                title: AppLocalizations.of(context)
+                                    .adminModerationQueueOpen,
+                                onTap: () =>
+                                    context.push(AppRoutes.adminModerationQueue),
+                              ),
                           ] else ...[
                             // Временная кнопка для получения админ прав
                             _MenuItem(

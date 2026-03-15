@@ -22,12 +22,24 @@ class DemoDataSeeder {
     }
   }
 
+  Future<bool> hasAchievements() async {
+    try {
+      final doc = await _firestore.collection('achievements').doc('critic').get();
+      return doc.exists;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Загрузить демо-данные
   Future<void> seed() async {
-    if (await hasData()) return;
-
-    await _seedQuests();
-    await _seedAchievements();
+    if (!(await hasData())) {
+      await _seedQuests();
+    }
+    
+    if (!(await hasAchievements())) {
+      await _seedAchievements();
+    }
   }
 
   Future<void> _seedQuests() async {
@@ -350,7 +362,51 @@ class DemoDataSeeder {
         colorValue: 0xFFE91E63,
         condition: AchievementCondition(
           type: AchievementType.speedRun,
-          targetValue: 30,
+          targetValue: 30, // минут
+        ),
+      ),
+      const Achievement(
+        id: 'traveler',
+        title: 'Путешественник',
+        description: 'Пройдите квесты как минимум в 2-х разных городах',
+        iconName: 'flight_takeoff',
+        colorValue: 0xFF00BCD4,
+        condition: AchievementCondition(
+          type: AchievementType.citiesVisited,
+          targetValue: 2,
+        ),
+      ),
+      const Achievement(
+        id: 'photographer',
+        title: 'Фотограф',
+        description: 'Сделайте 3 фото-ответа в квестах',
+        iconName: 'photo_camera',
+        colorValue: 0xFF8BC34A,
+        condition: AchievementCondition(
+          type: AchievementType.photosUploaded,
+          targetValue: 3,
+        ),
+      ),
+      const Achievement(
+        id: 'critic',
+        title: 'Критик',
+        description: 'Оставьте первый отзыв на пройденный квест',
+        iconName: 'rate_review',
+        colorValue: 0xFFFF5722,
+        condition: AchievementCondition(
+          type: AchievementType.reviewsLeft,
+          targetValue: 1,
+        ),
+      ),
+      const Achievement(
+        id: 'speed_demon',
+        title: 'Гонщик',
+        description: 'Завершите квест менее чем за 20 минут',
+        iconName: 'rocket_launch',
+        colorValue: 0xFFD50000,
+        condition: AchievementCondition(
+          type: AchievementType.speedRun,
+          targetValue: 20, // минут
         ),
       ),
     ];

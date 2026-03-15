@@ -23,8 +23,11 @@ class AchievementEvaluator {
       case AchievementType.speedRun:
         return progress.duration.inMinutes <= target;
       case AchievementType.citiesVisited:
+        return user.visitedCities.length >= target;
       case AchievementType.photosUploaded:
-        return false;
+        return user.photosUploaded >= target;
+      case AchievementType.reviewsLeft:
+        return user.reviewsLeft >= target;
     }
   }
 }

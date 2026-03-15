@@ -1085,33 +1085,43 @@ class _AdminVisualQuestEditorScreenState
                                 ],
                               ),
                               const SizedBox(height: 12),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  TextButton.icon(
-                                    onPressed: () => _showTaskDetails(task),
-                                    icon: const Icon(Icons.open_in_new_rounded),
-                                    label: const Text('Подробнее'),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  TextButton.icon(
-                                    onPressed: () => _editTask(index),
-                                    icon: const Icon(Icons.edit_outlined),
-                                    label: const Text('Изменить'),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  TextButton.icon(
-                                    onPressed: () => _deleteTask(index),
-                                    icon: const Icon(
-                                      Icons.delete_outline,
-                                      color: AppColors.error,
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  alignment: WrapAlignment.end,
+                                  children: [
+                                    OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        minimumSize: const Size(0, 44),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 10,
+                                        ),
+                                      ),
+                                      onPressed: () => _editTask(index),
+                                      icon: const Icon(Icons.edit_outlined),
+                                      label: const Text('Изменить'),
                                     ),
-                                    label: const Text(
-                                      'Удалить',
-                                      style: TextStyle(color: AppColors.error),
+                                    OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        minimumSize: const Size(0, 44),
+                                        side: const BorderSide(
+                                          color: AppColors.error,
+                                        ),
+                                        foregroundColor: AppColors.error,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 10,
+                                        ),
+                                      ),
+                                      onPressed: () => _deleteTask(index),
+                                      icon: const Icon(Icons.delete_outline),
+                                      label: const Text('Удалить'),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ],
                           ),
@@ -1152,65 +1162,7 @@ class _AdminVisualQuestEditorScreenState
     return question;
   }
 
-  Future<void> _showTaskDetails(QuestTask task) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) {
-        final locationName = _locationNameById(task.locationId);
-        final options = task.options.where((e) => e.trim().isNotEmpty).toList();
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Подробности задания',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 12),
-                  _buildTaskDetailLine('ID', task.id),
-                  _buildTaskDetailLine('Локация', locationName),
-                  _buildTaskDetailLine('Location ID', task.locationId),
-                  _buildTaskDetailLine('Тип', _getTaskTypeLabel(task.type)),
-                  _buildTaskDetailLine('Вопрос', task.question.trim()),
-                  if ((task.hint ?? '').trim().isNotEmpty)
-                    _buildTaskDetailLine('Подсказка', task.hint!.trim()),
-                  if ((task.correctAnswer ?? '').trim().isNotEmpty)
-                    _buildTaskDetailLine(
-                        'Правильный ответ', task.correctAnswer!.trim()),
-                  if (options.isNotEmpty)
-                    _buildTaskDetailLine('Варианты', options.join('\n')),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildTaskDetailLine(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: RichText(
-        text: TextSpan(
-          style: Theme.of(context).textTheme.bodyMedium,
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            TextSpan(text: value.isEmpty ? 'Не заполнено' : value),
-          ],
-        ),
-      ),
-    );
-  }
+  // Popup "Подробнее" removed intentionally.
 
   void _editLocation(int index) {
     final location = _locations[index];

@@ -183,6 +183,81 @@ class UserRepository {
     );
   }
 
+  /// Добавить посещенный город
+  Future<void> addVisitedCity(String uid, String city) async {
+    final cityName = city.trim();
+    if (cityName.isEmpty) return;
+
+    await _runWithFallback<void>(
+      remote: () async {
+        await _usersRef.doc(uid).update({
+          'visitedCities': FieldValue.arrayUnion([cityName]),
+        });
+
+        _updateLocalIfExists(uid, (current) {
+          if (current.visitedCities.contains(cityName)) return current;
+          return current.copyWith(
+            visitedCities: [...current.visitedCities, cityName],
+          );
+        });
+      },
+      local: () async {
+        _updateLocalOrCreate(uid, (current) {
+          if (current.visitedCities.contains(cityName)) return current;
+          return current.copyWith(
+            visitedCities: [...current.visitedCities, cityName],
+          );
+        });
+      },
+    );
+  }
+
+  /// Увеличить счетчик загруженных фото
+  Future<void> incrementPhotosUploaded(String uid, int count) async {
+    if (count <= 0) return;
+
+    await _runWithFallback<void>(
+      remote: () async {
+        await _usersRef.doc(uid).update({
+          'photosUploaded': FieldValue.increment(count),
+        });
+        _updateLocalIfExists(
+          uid,
+          (current) =>
+              current.copyWith(photosUploaded: current.photosUploaded + count),
+        );
+      },
+      local: () async {
+        _updateLocalOrCreate(
+          uid,
+          (current) =>
+              current.copyWith(photosUploaded: current.photosUploaded + count),
+        );
+      },
+    );
+  }
+
+  /// Увеличить счетчик оставленных отзывов
+  Future<void> incrementReviewsLeft(String uid) async {
+    await _runWithFallback<void>(
+      remote: () async {
+        await _usersRef.doc(uid).update({
+          'reviewsLeft': FieldValue.increment(1),
+        });
+        _updateLocalIfExists(
+          uid,
+          (current) => current.copyWith(reviewsLeft: current.reviewsLeft + 1),
+        );
+      },
+      local: () async {
+        _updateLocalOrCreate(
+          uid,
+          (current) => current.copyWith(reviewsLeft: current.reviewsLeft + 1),
+        );
+      },
+    );
+  }
+
   /// Обновить язык
   Future<void> updateLanguage(String uid, String language) async {
     await _runWithFallback<void>(

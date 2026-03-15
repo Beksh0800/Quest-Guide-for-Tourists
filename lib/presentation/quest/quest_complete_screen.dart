@@ -1,4 +1,4 @@
-﻿import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:quest_guide/core/di/app_router.dart';
@@ -11,6 +11,7 @@ import 'package:quest_guide/data/services/achievement_service.dart';
 import 'package:quest_guide/data/services/time_bonus_service.dart';
 import 'package:quest_guide/domain/models/quest.dart';
 import 'package:quest_guide/domain/models/quest_progress.dart';
+import 'package:quest_guide/domain/models/quest_task.dart';
 import 'package:quest_guide/presentation/common/premium_button.dart';
 import 'package:quest_guide/presentation/common/glass_card.dart';
 
@@ -154,6 +155,21 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
                         timeBonusPoints: timeBonusPoints,
                         completedAt: DateTime.now(),
                       );
+
+              // Трекинг новых ачивок: города и фото
+              if (quest != null && quest.city.isNotEmpty) {
+                await userRepo.addVisitedCity(userId, quest.city);
+              }
+              
+              int photoCount = 0;
+              for (final answer in completedProgress.taskAnswers.values) {
+                if (answer.taskType == TaskType.photo || answer.taskType == TaskType.findObject) {
+                  photoCount++;
+                }
+              }
+              if (photoCount > 0) {
+                await userRepo.incrementPhotosUploaded(userId, photoCount);
+              }
 
               final awardedIds = await achievementService.evaluateAndAward(
                 userId: userId,
@@ -385,7 +401,46 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
                   text: _error!,
                 ),
               ],
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              if (!_ratingSubmitted && (_saved || _alreadyCompleted)) ...[
+                GlassCard(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Оцените квест', // Using hardcoded text since no string in l10n yet
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(5, (index) {
+                          return IconButton(
+                            icon: Icon(
+                              Icons.star_rounded,
+                              size: 36,
+                              color: index < _selectedRating
+                                  ? AppColors.warning
+                                  : AppColors.textSecondary.withValues(alpha: 0.3),
+                            ),
+                            onPressed: () => _submitRating(index + 1),
+                          );
+                        }),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ] else if (_ratingSubmitted) ...[
+                _StatusBanner(
+                  icon: Icons.star_rounded,
+                  color: AppColors.warning,
+                  text: 'Спасибо за ваш отзыв!',
+                ),
+                const SizedBox(height: 24),
+              ],
               PremiumButton(
                 text: l10n.toHome,
                 onPressed: () => context.go(AppRoutes.home),
@@ -401,6 +456,49 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
         ),
       ),
     );
+  }
+
+  int _selectedRating = 0;
+  bool _ratingSubmitted = false;
+
+  Future<void> _submitRating(int rating) async {
+    setState(() => _selectedRating = rating);
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) return;
+
+    try {
+      final questRepo = QuestRepository();
+      final userRepo = UserRepository();
+      final achievementService = AchievementService(userRepository: userRepo);
+
+      await questRepo.updateRating(widget.questId, rating.toDouble());
+      await userRepo.incrementReviewsLeft(userId);
+
+      // Re-evaluate achievements immediately to check for the Critic badge
+      final progressRepo = ProgressRepository();
+      final progress = await progressRepo.getActiveProgress(userId, widget.questId) ?? 
+                       await progressRepo.getProgressById(widget.progressId ?? '');
+      
+      if (progress != null) {
+        final awardedIds = await achievementService.evaluateAndAward(
+          userId: userId,
+          progress: progress.copyWith(status: QuestStatus.completed),
+        );
+        
+        setState(() {
+          _ratingSubmitted = true;
+          _awardedBadges += awardedIds.length;
+        });
+      } else {
+        setState(() => _ratingSubmitted = true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка при отправке отзыва: $e')),
+        );
+      }
+    }
   }
 }
 

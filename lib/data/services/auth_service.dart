@@ -54,6 +54,20 @@ class AuthService {
     }
   }
 
+  Future<bool> isCurrentUserSuperuser() async {
+    final user = currentUser;
+    if (user == null) return false;
+
+    try {
+      final model = await _getUserModel(user.uid);
+      return AccessControl.isSuperuserRole(model.role);
+    } on FirebaseException {
+      return false;
+    } on Exception {
+      return false;
+    }
+  }
+
   /// Регистрация по email + пароль
   Future<UserModel> registerWithEmail({
     required String name,

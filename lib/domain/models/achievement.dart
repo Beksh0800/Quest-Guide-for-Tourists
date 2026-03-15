@@ -82,4 +82,5 @@ enum AchievementType {
   speedRun, // За время < N минут
   citiesVisited, // Посещено N городов
   photosUploaded, // Загружено N фото
+  reviewsLeft, // Оставлено N отзывов
 }
