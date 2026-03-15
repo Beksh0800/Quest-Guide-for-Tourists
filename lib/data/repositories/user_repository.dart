@@ -153,6 +153,76 @@ class UserRepository {
     );
   }
 
+  Future<void> markQuestCompleted({
+    required String uid,
+    required String questId,
+    DateTime? completedAt,
+  }) async {
+    final completedAtValue = completedAt ?? DateTime.now();
+
+    await _runWithFallback<void>(
+      remote: () async {
+        final userDoc = await _usersRef.doc(uid).get();
+        final current = userDoc.exists
+            ? UserModel.fromMap(userDoc.data()!, uid)
+            : UserModel(
+                id: uid,
+                name: '',
+                email: '',
+                createdAt: completedAtValue,
+              );
+
+        final nextStreak = _resolveNextStreak(
+          previousCompletedAt: current.lastCompletedQuestAt,
+          currentStreakDays: current.currentQuestStreakDays,
+          completedAt: completedAtValue,
+        );
+
+        await _usersRef.doc(uid).set(
+          {
+            'questsCompleted': FieldValue.increment(1),
+            'lastCompletedQuestAt': completedAtValue.toIso8601String(),
+            'currentQuestStreakDays': nextStreak,
+            'completedQuestIds': FieldValue.arrayUnion([questId]),
+          },
+          SetOptions(merge: true),
+        );
+
+        _updateLocalOrCreate(
+          uid,
+          (local) => local.copyWith(
+            questsCompleted: local.questsCompleted + 1,
+            lastCompletedQuestAt: completedAtValue,
+            currentQuestStreakDays: nextStreak,
+            completedQuestIds: local.completedQuestIds.contains(questId)
+                ? local.completedQuestIds
+                : [...local.completedQuestIds, questId],
+          ),
+        );
+      },
+      local: () async {
+        _updateLocalOrCreate(
+          uid,
+          (local) {
+            final nextStreak = _resolveNextStreak(
+              previousCompletedAt: local.lastCompletedQuestAt,
+              currentStreakDays: local.currentQuestStreakDays,
+              completedAt: completedAtValue,
+            );
+            return local.copyWith(
+              questsCompleted: local.questsCompleted + 1,
+              lastCompletedQuestAt: completedAtValue,
+              currentQuestStreakDays: nextStreak,
+              completedQuestIds: local.completedQuestIds.contains(questId)
+                  ? local.completedQuestIds
+                  : [...local.completedQuestIds, questId],
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// Добавить бейдж
   Future<void> addBadge(String uid, String badgeId) async {
     await _runWithFallback<void>(
@@ -417,5 +487,35 @@ class UserRepository {
       questsCompleted: data['questsCompleted'] as int? ?? 0,
       createdAt: updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
     );
+  }
+
+  int _resolveNextStreak({
+    required DateTime? previousCompletedAt,
+    required int currentStreakDays,
+    required DateTime completedAt,
+  }) {
+    if (previousCompletedAt == null) {
+      return 1;
+    }
+
+    final previousDay = DateTime(
+      previousCompletedAt.year,
+      previousCompletedAt.month,
+      previousCompletedAt.day,
+    );
+    final completedDay = DateTime(
+      completedAt.year,
+      completedAt.month,
+      completedAt.day,
+    );
+    final deltaDays = completedDay.difference(previousDay).inDays;
+
+    if (deltaDays <= 0) {
+      return currentStreakDays <= 0 ? 1 : currentStreakDays;
+    }
+    if (deltaDays == 1) {
+      return currentStreakDays <= 0 ? 1 : currentStreakDays + 1;
+    }
+    return 1;
   }
 }

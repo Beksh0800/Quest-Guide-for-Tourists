@@ -145,7 +145,11 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
               if (finalScore > 0) {
                 await userRepo.addPoints(userId, finalScore);
               }
-              await userRepo.incrementQuestsCompleted(userId);
+              await userRepo.markQuestCompleted(
+                uid: userId,
+                questId: widget.questId,
+                completedAt: DateTime.now(),
+              );
 
               final completedProgress =
                   (await progressRepo.getProgressById(progress.id)) ??
@@ -160,10 +164,11 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
               if (quest != null && quest.city.isNotEmpty) {
                 await userRepo.addVisitedCity(userId, quest.city);
               }
-              
+
               int photoCount = 0;
               for (final answer in completedProgress.taskAnswers.values) {
-                if (answer.taskType == TaskType.photo || answer.taskType == TaskType.findObject) {
+                if (answer.taskType == TaskType.photo ||
+                    answer.taskType == TaskType.findObject) {
                   photoCount++;
                 }
               }
@@ -387,10 +392,19 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
               ],
               if (_awardedBadges > 0) ...[
                 const SizedBox(height: 16),
-                _StatusBanner(
-                  icon: Icons.workspace_premium_rounded,
-                  color: AppColors.warning,
-                  text: l10n.newBadgesUnlocked(_awardedBadges),
+                TweenAnimationBuilder<double>(
+                  duration: const Duration(milliseconds: 650),
+                  curve: Curves.elasticOut,
+                  tween: Tween<double>(begin: 0.82, end: 1),
+                  builder: (context, value, child) => Transform.scale(
+                    scale: value,
+                    child: child,
+                  ),
+                  child: _StatusBanner(
+                    icon: Icons.workspace_premium_rounded,
+                    color: AppColors.warning,
+                    text: l10n.newBadgesUnlocked(_awardedBadges),
+                  ),
                 ),
               ],
               if (_error != null) ...[
@@ -409,9 +423,10 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
                     children: [
                       Text(
                         'Оцените квест', // Using hardcoded text since no string in l10n yet
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
                       ),
                       const SizedBox(height: 16),
                       Row(
@@ -423,7 +438,8 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
                               size: 36,
                               color: index < _selectedRating
                                   ? AppColors.warning
-                                  : AppColors.textSecondary.withValues(alpha: 0.3),
+                                  : AppColors.textSecondary
+                                      .withValues(alpha: 0.3),
                             ),
                             onPressed: () => _submitRating(index + 1),
                           );
@@ -476,15 +492,16 @@ class _QuestCompleteScreenState extends State<QuestCompleteScreen>
 
       // Re-evaluate achievements immediately to check for the Critic badge
       final progressRepo = ProgressRepository();
-      final progress = await progressRepo.getActiveProgress(userId, widget.questId) ?? 
-                       await progressRepo.getProgressById(widget.progressId ?? '');
-      
+      final progress =
+          await progressRepo.getActiveProgress(userId, widget.questId) ??
+              await progressRepo.getProgressById(widget.progressId ?? '');
+
       if (progress != null) {
         final awardedIds = await achievementService.evaluateAndAward(
           userId: userId,
           progress: progress.copyWith(status: QuestStatus.completed),
         );
-        
+
         setState(() {
           _ratingSubmitted = true;
           _awardedBadges += awardedIds.length;

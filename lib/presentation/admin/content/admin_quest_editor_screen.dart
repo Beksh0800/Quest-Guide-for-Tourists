@@ -460,6 +460,15 @@ class _AdminQuestEditorScreenState extends State<AdminQuestEditorScreen> {
       appBar: AppBar(
         title: Text(l10n.adminQuestEditorTitle),
         actions: [
+          IconButton(
+            tooltip: 'Visual editor',
+            onPressed: _saving
+                ? null
+                : () => context.go(
+                      '/admin/content/quest/${widget.questId}?mode=visual',
+                    ),
+            icon: const Icon(Icons.view_quilt_rounded),
+          ),
           TextButton(
             onPressed: _saving ? null : _save,
             child: _saving

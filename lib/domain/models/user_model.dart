@@ -14,11 +14,14 @@ class UserModel extends Equatable {
   final List<String> earnedBadgeIds;
   final String language; // 'ru' или 'kz'
   final DateTime createdAt;
-  
+
   // Новые метрики для достижений
   final int photosUploaded;
   final List<String> visitedCities;
   final int reviewsLeft;
+  final DateTime? lastCompletedQuestAt;
+  final int currentQuestStreakDays;
+  final List<String> completedQuestIds;
 
   const UserModel({
     required this.id,
@@ -35,6 +38,9 @@ class UserModel extends Equatable {
     this.photosUploaded = 0,
     this.visitedCities = const [],
     this.reviewsLeft = 0,
+    this.lastCompletedQuestAt,
+    this.currentQuestStreakDays = 0,
+    this.completedQuestIds = const [],
   });
 
   /// Из Firestore документа
@@ -42,7 +48,8 @@ class UserModel extends Equatable {
     final roleRaw = map['role'] as String?;
     final role = roleRaw?.trim().toLowerCase();
     final isAdminFlag = map['isAdmin'] == true;
-    final hasAdminRole = AccessControl.isAdminRole(role) || AccessControl.isSuperuserRole(role);
+    final hasAdminRole =
+        AccessControl.isAdminRole(role) || AccessControl.isSuperuserRole(role);
 
     return UserModel(
       id: id,
@@ -60,6 +67,11 @@ class UserModel extends Equatable {
       photosUploaded: map['photosUploaded'] as int? ?? 0,
       visitedCities: List<String>.from(map['visitedCities'] ?? []),
       reviewsLeft: map['reviewsLeft'] as int? ?? 0,
+      lastCompletedQuestAt: map['lastCompletedQuestAt'] != null
+          ? DateTime.tryParse(map['lastCompletedQuestAt'] as String)
+          : null,
+      currentQuestStreakDays: map['currentQuestStreakDays'] as int? ?? 0,
+      completedQuestIds: List<String>.from(map['completedQuestIds'] ?? []),
     );
   }
 
@@ -79,6 +91,9 @@ class UserModel extends Equatable {
       'photosUploaded': photosUploaded,
       'visitedCities': visitedCities,
       'reviewsLeft': reviewsLeft,
+      'lastCompletedQuestAt': lastCompletedQuestAt?.toIso8601String(),
+      'currentQuestStreakDays': currentQuestStreakDays,
+      'completedQuestIds': completedQuestIds,
     };
   }
 
@@ -95,6 +110,9 @@ class UserModel extends Equatable {
     int? photosUploaded,
     List<String>? visitedCities,
     int? reviewsLeft,
+    DateTime? lastCompletedQuestAt,
+    int? currentQuestStreakDays,
+    List<String>? completedQuestIds,
   }) {
     return UserModel(
       id: id,
@@ -111,6 +129,10 @@ class UserModel extends Equatable {
       photosUploaded: photosUploaded ?? this.photosUploaded,
       visitedCities: visitedCities ?? this.visitedCities,
       reviewsLeft: reviewsLeft ?? this.reviewsLeft,
+      lastCompletedQuestAt: lastCompletedQuestAt ?? this.lastCompletedQuestAt,
+      currentQuestStreakDays:
+          currentQuestStreakDays ?? this.currentQuestStreakDays,
+      completedQuestIds: completedQuestIds ?? this.completedQuestIds,
     );
   }
 
@@ -129,5 +151,8 @@ class UserModel extends Equatable {
         photosUploaded,
         visitedCities,
         reviewsLeft,
+        lastCompletedQuestAt,
+        currentQuestStreakDays,
+        completedQuestIds,
       ];
 }

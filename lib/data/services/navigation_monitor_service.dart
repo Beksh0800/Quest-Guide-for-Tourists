@@ -3,6 +3,10 @@ import 'dart:math' as math;
 import 'package:geolocator/geolocator.dart';
 import 'package:quest_guide/domain/models/navigation_route.dart';
 
+enum ArrivalState { outside, candidate, stableArrived }
+
+enum GpsQuality { good, weak, lost }
+
 class NavigationMonitorConfig {
   final Duration rerouteCooldown;
   final double minRerouteShiftMeters;
@@ -10,6 +14,12 @@ class NavigationMonitorConfig {
   final double stepArrivalThresholdMeters;
   final int voiceSoonDistanceMeters;
   final int voiceNowDistanceMeters;
+  final double maxAcceptedAccuracyMeters;
+  final double arrivalEnterFactor;
+  final double arrivalExitFactor;
+  final Duration targetStabilityMinDuration;
+  final int targetStabilityMinSamples;
+  final Duration gpsSignalLostAfter;
 
   const NavigationMonitorConfig({
     this.rerouteCooldown = const Duration(seconds: 12),
@@ -18,7 +28,113 @@ class NavigationMonitorConfig {
     this.stepArrivalThresholdMeters = 24,
     this.voiceSoonDistanceMeters = 120,
     this.voiceNowDistanceMeters = 40,
+    this.maxAcceptedAccuracyMeters = 45,
+    this.arrivalEnterFactor = 1.0,
+    this.arrivalExitFactor = 1.3,
+    this.targetStabilityMinDuration = const Duration(seconds: 8),
+    this.targetStabilityMinSamples = 3,
+    this.gpsSignalLostAfter = const Duration(seconds: 20),
   });
+}
+
+class ArrivalEvaluation {
+  final ArrivalState state;
+  final bool isReadyToStart;
+  final bool becameStable;
+  final double enterThresholdMeters;
+  final double exitThresholdMeters;
+
+  const ArrivalEvaluation({
+    required this.state,
+    required this.isReadyToStart,
+    required this.becameStable,
+    required this.enterThresholdMeters,
+    required this.exitThresholdMeters,
+  });
+}
+
+class TargetArrivalTracker {
+  final NavigationMonitorConfig config;
+
+  ArrivalState _state = ArrivalState.outside;
+  DateTime? _candidateSince;
+  int _candidateSamples = 0;
+
+  TargetArrivalTracker({
+    this.config = const NavigationMonitorConfig(),
+  });
+
+  ArrivalState get state => _state;
+
+  void reset() {
+    _state = ArrivalState.outside;
+    _candidateSince = null;
+    _candidateSamples = 0;
+  }
+
+  ArrivalEvaluation evaluate({
+    required double distanceMeters,
+    required double radiusMeters,
+    required DateTime now,
+  }) {
+    final enterThreshold = _arrivalEnterThreshold(radiusMeters);
+    final exitThreshold = _arrivalExitThreshold(radiusMeters);
+    final withinEnter = distanceMeters <= enterThreshold;
+    final withinExit = distanceMeters <= exitThreshold;
+    var becameStable = false;
+
+    switch (_state) {
+      case ArrivalState.outside:
+        if (withinEnter) {
+          _state = ArrivalState.candidate;
+          _candidateSince = now;
+          _candidateSamples = 1;
+        }
+        break;
+      case ArrivalState.candidate:
+        if (!withinExit) {
+          reset();
+          break;
+        }
+
+        _candidateSamples += 1;
+        final stableSince = _candidateSince;
+        if (stableSince != null &&
+            now.difference(stableSince) >= config.targetStabilityMinDuration &&
+            _candidateSamples >= config.targetStabilityMinSamples) {
+          _state = ArrivalState.stableArrived;
+          becameStable = true;
+        }
+        break;
+      case ArrivalState.stableArrived:
+        if (!withinExit) {
+          reset();
+        }
+        break;
+    }
+
+    return ArrivalEvaluation(
+      state: _state,
+      isReadyToStart: _state == ArrivalState.stableArrived,
+      becameStable: becameStable,
+      enterThresholdMeters: enterThreshold,
+      exitThresholdMeters: exitThreshold,
+    );
+  }
+
+  double _arrivalEnterThreshold(double radiusMeters) {
+    final normalizedRadius = math.max(radiusMeters, 1.0);
+    return math.max(8.0, normalizedRadius * config.arrivalEnterFactor);
+  }
+
+  double _arrivalExitThreshold(double radiusMeters) {
+    final normalizedRadius = math.max(radiusMeters, 1.0);
+    final enterThreshold = _arrivalEnterThreshold(normalizedRadius);
+    return math.max(
+      enterThreshold + 4.0,
+      normalizedRadius * config.arrivalExitFactor,
+    );
+  }
 }
 
 class RerouteDecision {
@@ -164,6 +280,26 @@ class NavigationMonitorService {
   bool _cooldownExpired(DateTime? lastRouteRequestedAt, DateTime now) {
     if (lastRouteRequestedAt == null) return true;
     return now.difference(lastRouteRequestedAt) >= config.rerouteCooldown;
+  }
+
+  bool isAccuracyAcceptable(double? accuracyMeters) {
+    if (accuracyMeters == null) return false;
+    return accuracyMeters <= config.maxAcceptedAccuracyMeters;
+  }
+
+  GpsQuality resolveGpsQuality({
+    required double? latestAccuracyMeters,
+    required DateTime? lastAcceptedFixAt,
+    required DateTime now,
+  }) {
+    if (lastAcceptedFixAt == null ||
+        now.difference(lastAcceptedFixAt) > config.gpsSignalLostAfter) {
+      return GpsQuality.lost;
+    }
+    if (!isAccuracyAcceptable(latestAccuracyMeters)) {
+      return GpsQuality.weak;
+    }
+    return GpsQuality.good;
   }
 
   double distanceToPolylineMeters({

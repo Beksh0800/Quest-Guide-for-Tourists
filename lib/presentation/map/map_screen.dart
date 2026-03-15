@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -15,6 +15,7 @@ import 'package:quest_guide/data/services/navigation_monitor_service.dart';
 import 'package:quest_guide/data/services/navigation_voice_service.dart';
 import 'package:quest_guide/data/services/road_routing_service.dart';
 import 'package:quest_guide/domain/models/navigation_route.dart';
+import 'package:quest_guide/domain/models/navigation_runtime_state.dart';
 import 'package:quest_guide/domain/models/quest_location.dart';
 import 'package:quest_guide/domain/models/quest_progress.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -28,7 +29,7 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final _questRepo = QuestRepository();
   final _progressRepo = ProgressRepository();
   final GoogleDirectionsRoutingService _routingService =
@@ -36,10 +37,12 @@ class _MapScreenState extends State<MapScreen> {
   final NavigationMonitorService _navigationMonitor =
       const NavigationMonitorService();
   final NavigationVoiceService _voiceService = NavigationVoiceService();
+  final TargetArrivalTracker _arrivalTracker = TargetArrivalTracker();
 
   List<QuestLocation> _locations = [];
   Position? _currentPosition;
   StreamSubscription<Position>? _positionSub;
+  Timer? _gpsStatusTicker;
   bool _loading = true;
   String? _error;
   int _activeIndex = 0;
@@ -61,17 +64,34 @@ class _MapScreenState extends State<MapScreen> {
   bool _voiceEnabled = true;
   bool _isBottomPanelExpanded = true;
   String _selectedTravelMode = 'walking'; // 'walking' | 'driving'
+  DateTime? _lastAcceptedFixAt;
+  double? _latestGpsAccuracyMeters;
+  GpsQuality _gpsQuality = GpsQuality.lost;
+  bool _locationPromptVisible = false;
+  bool _awaitingSettingsReturn = false;
+  NavigationRuntimeState _runtimeState = const NavigationRuntimeState(
+    gpsQuality: GpsQuality.lost,
+    routeStatus: RouteStatus.unavailable,
+    arrivalState: ArrivalState.outside,
+  );
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_voiceService.initialize());
     _voiceService.setEnabled(_voiceEnabled);
+    _gpsStatusTicker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _refreshGpsQuality(),
+    );
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _gpsStatusTicker?.cancel();
     _positionSub?.cancel();
     _mapController?.dispose();
 
@@ -79,6 +99,14 @@ class _MapScreenState extends State<MapScreen> {
 
     unawaited(_voiceService.dispose());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _awaitingSettingsReturn) {
+      _awaitingSettingsReturn = false;
+      unawaited(_retryLocationSetup());
+    }
   }
 
   Future<void> _load() async {
@@ -112,12 +140,15 @@ class _MapScreenState extends State<MapScreen> {
           (progress?.currentLocationIndex ?? 0).clamp(0, locations.length - 1);
 
       if (!mounted) return;
+      _arrivalTracker.reset();
       setState(() {
         _locations = locations;
         _activeIndex = activeIndex;
         _loading = false;
         _routeError = null;
         _directionsApiUnavailable = false;
+        _isWithinTargetRadius = false;
+        _proximityNotified = false;
       });
 
       await _startLocationTracking();
@@ -137,6 +168,7 @@ class _MapScreenState extends State<MapScreen> {
     if (!enabled) {
       if (!mounted) return;
       setState(() => _error = l10n.locationServiceDisabled);
+      unawaited(_showEnableLocationDialog());
       return;
     }
 
@@ -152,6 +184,10 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
+    if (mounted && _error != null) {
+      setState(() => _error = null);
+    }
+
     final initial = await Geolocator.getCurrentPosition();
     _onPositionUpdate(initial);
 
@@ -162,6 +198,116 @@ class _MapScreenState extends State<MapScreen> {
         distanceFilter: 5,
       ),
     ).listen(_onPositionUpdate);
+  }
+
+  Future<void> _showEnableLocationDialog() async {
+    if (!mounted || _locationPromptVisible) return;
+    _locationPromptVisible = true;
+    final l10n = AppLocalizations.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.locationServiceDisabled),
+          content: const Text(
+            'Включите геолокацию в настройках устройства, чтобы продолжить маршрут.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _openLocationSettings();
+              },
+              child: const Text('Включить геолокацию'),
+            ),
+          ],
+        );
+      },
+    );
+    _locationPromptVisible = false;
+  }
+
+  Future<void> _openLocationSettings() async {
+    _awaitingSettingsReturn = true;
+    await Geolocator.openLocationSettings();
+  }
+
+  Future<void> _openAppSettings() async {
+    _awaitingSettingsReturn = true;
+    await Geolocator.openAppSettings();
+  }
+
+  Future<void> _retryLocationSetup() async {
+    if (!mounted) return;
+    setState(() => _error = null);
+    await _startLocationTracking();
+  }
+
+  Widget _buildLocationErrorState(
+    BuildContext context, {
+    required AppLocalizations l10n,
+    required bool serviceDisabled,
+    required bool permissionDenied,
+  }) {
+    final showActions = serviceDisabled || permissionDenied;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.location_off_rounded,
+              size: 56,
+              color: AppColors.textSecondary,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _error ?? l10n.error,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              serviceDisabled
+                  ? 'Для продолжения маршрута включите службу геолокации.'
+                  : 'Разрешите доступ к геолокации в настройках приложения.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+            ),
+            const SizedBox(height: 18),
+            if (showActions)
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                alignment: WrapAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    onPressed: serviceDisabled
+                        ? _openLocationSettings
+                        : _openAppSettings,
+                    icon: const Icon(Icons.settings_rounded),
+                    label: Text(serviceDisabled
+                        ? 'Включить геолокацию'
+                        : 'Открыть настройки'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _retryLocationSetup,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(l10n.retry),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _centerOnActivePoint() async {
@@ -180,6 +326,36 @@ class _MapScreenState extends State<MapScreen> {
   void _onPositionUpdate(Position position) {
     if (!mounted || _locations.isEmpty) return;
 
+    final now = DateTime.now();
+    _latestGpsAccuracyMeters = position.accuracy;
+    final isAcceptedAccuracy =
+        _navigationMonitor.isAccuracyAcceptable(position.accuracy);
+
+    if (!isAcceptedAccuracy) {
+      final gpsQuality = _navigationMonitor.resolveGpsQuality(
+        latestAccuracyMeters: _latestGpsAccuracyMeters,
+        lastAcceptedFixAt: _lastAcceptedFixAt,
+        now: now,
+      );
+      setState(() {
+        _currentPosition = position;
+        _gpsQuality = gpsQuality;
+        _runtimeState = NavigationRuntimeState(
+          gpsQuality: gpsQuality,
+          routeStatus: _isOffRoute
+              ? RouteStatus.offRoute
+              : (_activeRoute == null
+                  ? RouteStatus.unavailable
+                  : RouteStatus.onRoute),
+          arrivalState: _arrivalTracker.state,
+          offRouteDistanceMeters: _offRouteDistanceMeters,
+          lastStableFixAt: _lastAcceptedFixAt,
+        );
+      });
+      return;
+    }
+
+    _lastAcceptedFixAt = now;
     final target = _locations[_activeIndex];
     final distance = Geolocator.distanceBetween(
       position.latitude,
@@ -188,8 +364,12 @@ class _MapScreenState extends State<MapScreen> {
       target.longitude,
     );
 
-    final withinRadius = distance <= target.radiusMeters;
-    if (withinRadius && !_proximityNotified) {
+    final arrival = _arrivalTracker.evaluate(
+      distanceMeters: distance,
+      radiusMeters: target.radiusMeters.toDouble(),
+      now: now,
+    );
+    if (arrival.becameStable && !_proximityNotified) {
       _proximityNotified = true;
       final l10n = AppLocalizations.of(context);
       LocalNotificationService.instance.show(
@@ -197,11 +377,30 @@ class _MapScreenState extends State<MapScreen> {
         title: l10n.locationReachedTitle,
         body: l10n.locationReachedBody(target.name),
       );
+    } else if (!arrival.isReadyToStart) {
+      _proximityNotified = false;
     }
 
+    final gpsQuality = _navigationMonitor.resolveGpsQuality(
+      latestAccuracyMeters: _latestGpsAccuracyMeters,
+      lastAcceptedFixAt: _lastAcceptedFixAt,
+      now: now,
+    );
     setState(() {
       _currentPosition = position;
-      _isWithinTargetRadius = withinRadius;
+      _isWithinTargetRadius = arrival.isReadyToStart;
+      _gpsQuality = gpsQuality;
+      _runtimeState = NavigationRuntimeState(
+        gpsQuality: gpsQuality,
+        routeStatus: _isOffRoute
+            ? RouteStatus.offRoute
+            : (_activeRoute == null
+                ? RouteStatus.unavailable
+                : RouteStatus.onRoute),
+        arrivalState: arrival.state,
+        offRouteDistanceMeters: _offRouteDistanceMeters,
+        lastStableFixAt: _lastAcceptedFixAt,
+      );
     });
 
     final currentPoint = _positionToPoint(position);
@@ -231,6 +430,14 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _isOffRoute = decision.isOffRoute;
       _offRouteDistanceMeters = decision.offRouteDistanceMeters;
+      _runtimeState = NavigationRuntimeState(
+        gpsQuality: _gpsQuality,
+        routeStatus:
+            decision.isOffRoute ? RouteStatus.offRoute : RouteStatus.onRoute,
+        arrivalState: _arrivalTracker.state,
+        offRouteDistanceMeters: decision.offRouteDistanceMeters,
+        lastStableFixAt: _lastAcceptedFixAt,
+      );
     });
 
     if (decision.isOffRoute) {
@@ -260,7 +467,9 @@ class _MapScreenState extends State<MapScreen> {
     required NavigationPoint destination,
     required String reason,
   }) async {
-    if (_routeLoading || _locations.isEmpty || _directionsApiUnavailable) return;
+    if (_routeLoading || _locations.isEmpty || _directionsApiUnavailable) {
+      return;
+    }
 
     final l10n = AppLocalizations.of(context);
 
@@ -472,6 +681,30 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     return normalized;
+  }
+
+  void _refreshGpsQuality() {
+    if (!mounted) return;
+    final resolved = _navigationMonitor.resolveGpsQuality(
+      latestAccuracyMeters: _latestGpsAccuracyMeters,
+      lastAcceptedFixAt: _lastAcceptedFixAt,
+      now: DateTime.now(),
+    );
+    if (resolved == _gpsQuality) return;
+    setState(() {
+      _gpsQuality = resolved;
+      _runtimeState = NavigationRuntimeState(
+        gpsQuality: resolved,
+        routeStatus: _isOffRoute
+            ? RouteStatus.offRoute
+            : (_activeRoute == null
+                ? RouteStatus.unavailable
+                : RouteStatus.onRoute),
+        arrivalState: _arrivalTracker.state,
+        offRouteDistanceMeters: _offRouteDistanceMeters,
+        lastStableFixAt: _lastAcceptedFixAt,
+      );
+    });
   }
 
   NavigationPoint _positionToPoint(Position position) {
@@ -705,6 +938,13 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  void _muteVoiceForFiveMinutes() {
+    if (!_voiceEnabled) return;
+    _voiceService.muteFor(const Duration(minutes: 5));
+    if (!mounted) return;
+    setState(() {});
+  }
+
   Future<void> _zoomIn() async {
     await _mapController?.animateCamera(CameraUpdate.zoomIn());
   }
@@ -774,6 +1014,84 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     return const SizedBox.shrink();
+  }
+
+  String _gpsStatusLabel() {
+    switch (_gpsQuality) {
+      case GpsQuality.good:
+        return 'GPS: OK';
+      case GpsQuality.weak:
+        return 'GPS: weak';
+      case GpsQuality.lost:
+        return 'GPS: lost';
+    }
+  }
+
+  Color _gpsStatusColor() {
+    switch (_gpsQuality) {
+      case GpsQuality.good:
+        return AppColors.success;
+      case GpsQuality.weak:
+        return AppColors.warning;
+      case GpsQuality.lost:
+        return AppColors.error;
+    }
+  }
+
+  Widget _buildNavigationStatusBar(AppLocalizations l10n) {
+    final remainingMeters = _remainingRouteDistanceMeters();
+    final remainingSeconds = _remainingRouteDurationSeconds();
+    final directDistance = _distanceToTargetMeters()?.round();
+    final isOffRoute = _runtimeState.routeStatus == RouteStatus.offRoute;
+    final routeUnavailable =
+        _runtimeState.routeStatus == RouteStatus.unavailable;
+    final routeStatusText = routeUnavailable
+        ? 'Route: —'
+        : (isOffRoute ? 'Route: off' : 'Route: on');
+    final routeStatusColor = routeUnavailable
+        ? AppColors.textSecondary
+        : (isOffRoute ? AppColors.warning : AppColors.success);
+
+    String etaText = 'ETA: —';
+    if (remainingSeconds != null) {
+      etaText = 'ETA: ${_formatEta(remainingSeconds, l10n)}';
+    }
+
+    String distanceText = 'Dist: —';
+    if (remainingMeters != null) {
+      distanceText = 'Dist: ${_formatDistance(remainingMeters, l10n)}';
+    } else if (directDistance != null) {
+      distanceText = 'Dist: ${_formatDistance(directDistance, l10n)}';
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _StatusPill(
+          icon: Icons.gps_fixed_rounded,
+          label: _gpsStatusLabel(),
+          color: _gpsStatusColor(),
+        ),
+        _StatusPill(
+          icon: isOffRoute
+              ? Icons.warning_amber_rounded
+              : Icons.alt_route_rounded,
+          label: routeStatusText,
+          color: routeStatusColor,
+        ),
+        _StatusPill(
+          icon: Icons.route_rounded,
+          label: distanceText,
+          color: AppColors.primary,
+        ),
+        _StatusPill(
+          icon: Icons.schedule_rounded,
+          label: etaText,
+          color: AppColors.primary,
+        ),
+      ],
+    );
   }
 
   Widget _buildTurnByTurnCard(AppLocalizations l10n) {
@@ -991,9 +1309,18 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     if (_error != null) {
+      final isServiceDisabled = _error == l10n.locationServiceDisabled;
+      final isPermissionDenied = _error == l10n.locationPermissionDenied;
       return Scaffold(
         appBar: AppBar(title: Text(l10n.mapTitle)),
-        body: Center(child: Text(_error!)),
+        body: (isServiceDisabled || isPermissionDenied)
+            ? _buildLocationErrorState(
+                context,
+                l10n: l10n,
+                serviceDisabled: isServiceDisabled,
+                permissionDenied: isPermissionDenied,
+              )
+            : Center(child: Text(_error!)),
       );
     }
 
@@ -1020,6 +1347,30 @@ class _MapScreenState extends State<MapScreen> {
                   ? Icons.volume_up_rounded
                   : Icons.volume_off_rounded,
             ),
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'mute_5m') {
+                _muteVoiceForFiveMinutes();
+              }
+            },
+            itemBuilder: (context) => <PopupMenuEntry<String>>[
+              PopupMenuItem<String>(
+                value: 'mute_5m',
+                enabled: _voiceEnabled,
+                child: Row(
+                  children: [
+                    const Icon(Icons.snooze_rounded),
+                    const SizedBox(width: 8),
+                    Text(
+                      _voiceService.isTemporarilyMuted
+                          ? 'Voice muted'
+                          : 'Mute voice for 5 min',
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1092,141 +1443,151 @@ class _MapScreenState extends State<MapScreen> {
                 }
               },
               child: AnimatedSize(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.divider),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: AppColors.divider),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
                   child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Drag handle
-                    GestureDetector(
-                      onTap: _toggleBottomPanel,
-                      child: Center(
-                        child: Container(
-                          width: 36,
-                          height: 4,
-                          margin: const EdgeInsets.only(bottom: 10),
-                          decoration: BoxDecoration(
-                            color: AppColors.divider,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                l10n.pointOf(_activeIndex + 1, _locations.length),
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: AppColors.textSecondary,
-                                    ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                target.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ],
-                          ),
-                        ),
-                        // Travel mode selector
-                        _TravelModeToggle(
-                          selectedMode: _selectedTravelMode,
-                          onModeSelected: _setTravelMode,
-                        ),
-                        IconButton(
-                          onPressed: _toggleBottomPanel,
-                          tooltip: _isBottomPanelExpanded
-                              ? 'Свернуть панель'
-                              : 'Развернуть панель',
-                          icon: Icon(
-                            _isBottomPanelExpanded
-                                ? Icons.keyboard_arrow_down_rounded
-                                : Icons.keyboard_arrow_up_rounded,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (!_isBottomPanelExpanded)
-                      Text(
-                        'Потяните вверх или нажмите стрелку для деталей',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Drag handle
+                      GestureDetector(
+                        onTap: _toggleBottomPanel,
+                        child: Center(
+                          child: Container(
+                            width: 36,
+                            height: 4,
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: AppColors.divider,
+                              borderRadius: BorderRadius.circular(999),
                             ),
+                          ),
+                        ),
                       ),
-                    if (_isBottomPanelExpanded) ...[
-                      const SizedBox(height: 6),
-                      _buildRouteSummary(l10n),
-                      const SizedBox(height: 8),
-                      _buildRouteStatusBanners(l10n),
-                      _buildTurnByTurnCard(l10n),
-                      const SizedBox(height: 8),
                       Row(
                         children: [
                           Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: canStartTask ? _goToTask : null,
-                              icon: const Icon(Icons.task_alt_rounded),
-                              label: Text(
-                                canStartTask ? l10n.doTask : l10n.moveCloser,
-                              ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  l10n.pointOf(
+                                      _activeIndex + 1, _locations.length),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: AppColors.textSecondary,
+                                      ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  target.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                ),
+                              ],
                             ),
                           ),
-                          if (kDebugMode) ...[
-                            const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: _skipToTaskInDebug,
-                              tooltip: l10n.devBypass,
-                              icon: Icon(
-                                _devOverride
-                                    ? Icons.lock_open_rounded
-                                    : Icons.lock_rounded,
-                              ),
+                          // Travel mode selector
+                          _TravelModeToggle(
+                            selectedMode: _selectedTravelMode,
+                            onModeSelected: _setTravelMode,
+                          ),
+                          IconButton(
+                            onPressed: _toggleBottomPanel,
+                            tooltip: _isBottomPanelExpanded
+                                ? 'Свернуть панель'
+                                : 'Развернуть панель',
+                            icon: Icon(
+                              _isBottomPanelExpanded
+                                  ? Icons.keyboard_arrow_down_rounded
+                                  : Icons.keyboard_arrow_up_rounded,
                             ),
-                          ],
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 4),
-                      // Compact fallback — smaller, less prominent
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: _openExternalNavigation,
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.textSecondary,
-                            textStyle: Theme.of(context).textTheme.labelSmall,
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          icon: const Icon(Icons.open_in_new_rounded, size: 14),
-                          label: Text(l10n.mapOpenGoogleMapsFallback),
+                      if (!_isBottomPanelExpanded)
+                        Text(
+                          'Потяните вверх или нажмите стрелку для деталей',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
                         ),
-                      ),
+                      if (_isBottomPanelExpanded) ...[
+                        const SizedBox(height: 6),
+                        _buildNavigationStatusBar(l10n),
+                        const SizedBox(height: 8),
+                        _buildRouteSummary(l10n),
+                        const SizedBox(height: 8),
+                        _buildRouteStatusBanners(l10n),
+                        _buildTurnByTurnCard(l10n),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: canStartTask ? _goToTask : null,
+                                icon: const Icon(Icons.task_alt_rounded),
+                                label: Text(
+                                  canStartTask ? l10n.doTask : l10n.moveCloser,
+                                ),
+                              ),
+                            ),
+                            if (kDebugMode) ...[
+                              const SizedBox(width: 8),
+                              IconButton(
+                                onPressed: _skipToTaskInDebug,
+                                tooltip: l10n.devBypass,
+                                icon: Icon(
+                                  _devOverride
+                                      ? Icons.lock_open_rounded
+                                      : Icons.lock_rounded,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        // Compact fallback — smaller, less prominent
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: _openExternalNavigation,
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.textSecondary,
+                              textStyle: Theme.of(context).textTheme.labelSmall,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            icon:
+                                const Icon(Icons.open_in_new_rounded, size: 14),
+                            label: Text(l10n.mapOpenGoogleMapsFallback),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
             ),
           ),
         ],
@@ -1318,3 +1679,40 @@ class _ModeButton extends StatelessWidget {
   }
 }
 
+class _StatusPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  const _StatusPill({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}

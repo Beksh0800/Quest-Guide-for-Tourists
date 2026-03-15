@@ -25,8 +25,18 @@ values (
   'quest-guide-for-tourists',
   'quest-guide-for-tourists',
   true,
-  10485760,
-  array['image/jpeg', 'image/png', 'image/webp']::text[]
+  52428800,
+  array[
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'audio/mpeg',
+    'audio/mp4',
+    'audio/aac',
+    'audio/wav',
+    'audio/ogg',
+    'audio/flac'
+  ]::text[]
 )
 on conflict (id) do update
 set
@@ -81,14 +91,14 @@ using (
 );
 
 -- Admin content (visual quest editor):
--- quests/{filename}, locations/{filename}, tasks/{filename}
+-- quests/{filename}, locations/{filename}, tasks/{filename}, audio-guides/{filename}
 create policy "qg_admin_content_read"
 on storage.objects
 for select
 to public
 using (
   bucket_id = 'quest-guide-for-tourists'
-  and (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+  and (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks', 'audio-guides'])
 );
 
 create policy "qg_admin_content_upload"
@@ -97,9 +107,18 @@ for insert
 to anon, authenticated
 with check (
   bucket_id = 'quest-guide-for-tourists'
-  and (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+  and (
+    (
+      (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+      and lower(storage.extension(name)) = any (array['jpg', 'jpeg', 'png', 'webp'])
+    )
+    or
+    (
+      (storage.foldername(name))[1] = 'audio-guides'
+      and lower(storage.extension(name)) = any (array['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac'])
+    )
+  )
   and array_length(storage.foldername(name), 1) = 1
-  and lower(storage.extension(name)) = any (array['jpg', 'jpeg', 'png', 'webp'])
 );
 
 create policy "qg_admin_content_delete"
@@ -108,9 +127,18 @@ for delete
 to anon, authenticated
 using (
   bucket_id = 'quest-guide-for-tourists'
-  and (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+  and (
+    (
+      (storage.foldername(name))[1] = any (array['quests', 'locations', 'tasks'])
+      and lower(storage.extension(name)) = any (array['jpg', 'jpeg', 'png', 'webp'])
+    )
+    or
+    (
+      (storage.foldername(name))[1] = 'audio-guides'
+      and lower(storage.extension(name)) = any (array['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac'])
+    )
+  )
   and array_length(storage.foldername(name), 1) = 1
-  and lower(storage.extension(name)) = any (array['jpg', 'jpeg', 'png', 'webp'])
 );
 
 commit;

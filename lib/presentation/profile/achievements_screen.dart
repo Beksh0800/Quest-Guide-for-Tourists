@@ -3,7 +3,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:quest_guide/core/l10n/app_localizations.dart';
 import 'package:quest_guide/core/theme/app_theme.dart';
+import 'package:quest_guide/data/services/achievement_evaluator.dart';
 import 'package:quest_guide/domain/models/achievement.dart';
+import 'package:quest_guide/domain/models/quest_progress.dart';
+import 'package:quest_guide/domain/models/user_model.dart';
 
 class AchievementsScreen extends StatelessWidget {
   const AchievementsScreen({super.key});
@@ -46,9 +49,11 @@ class AchievementsScreen extends StatelessWidget {
               final achievement = data.achievements[index];
               final earned = data.earnedIds.contains(achievement.id);
               final color = Color(achievement.colorValue);
+              final progress = data.progressByAchievement[achievement.id];
 
               return GestureDetector(
-                onTap: () => _showDetail(context, achievement, earned),
+                onTap: () =>
+                    _showDetail(context, achievement, earned, progress),
                 child: Column(
                   children: [
                     Container(
@@ -90,6 +95,16 @@ class AchievementsScreen extends StatelessWidget {
                                 : AppColors.textHint,
                           ),
                     ),
+                    const SizedBox(height: 6),
+                    LinearProgressIndicator(
+                      minHeight: 4,
+                      borderRadius: BorderRadius.circular(999),
+                      value: earned ? 1 : (progress?.progressPercent ?? 0),
+                      backgroundColor: AppColors.divider,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        earned ? color : AppColors.primary,
+                      ),
+                    ),
                   ],
                 ),
               );
@@ -100,7 +115,12 @@ class AchievementsScreen extends StatelessWidget {
     );
   }
 
-  void _showDetail(BuildContext context, Achievement a, bool earned) {
+  void _showDetail(
+    BuildContext context,
+    Achievement a,
+    bool earned,
+    AchievementProgressSnapshot? progress,
+  ) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -130,6 +150,14 @@ class AchievementsScreen extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
+            const SizedBox(height: 8),
+            Text(
+              progress?.progressText ?? '—',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+            ),
             const SizedBox(height: 24),
           ],
         ),
@@ -145,18 +173,62 @@ class AchievementsScreen extends StatelessWidget {
         .map((d) => Achievement.fromMap(d.data(), d.id))
         .toList();
 
+    UserModel? userModel;
+    QuestProgress? latestProgress;
     List<String> earnedIds = [];
     if (userId != null) {
       final userDoc = await firestore.collection('users').doc(userId).get();
       if (userDoc.exists) {
+        userModel = UserModel.fromMap(userDoc.data()!, userDoc.id);
         final badges = (userDoc.data()?['earnedBadgeIds'] as List<dynamic>?) ??
             (userDoc.data()?['badges'] as List<dynamic>?) ??
             [];
         earnedIds = badges.cast<String>();
       }
+
+      final latestProgressSnap = await firestore
+          .collection('progress')
+          .where('userId', isEqualTo: userId)
+          .orderBy('startedAt', descending: true)
+          .limit(1)
+          .get();
+      if (latestProgressSnap.docs.isNotEmpty) {
+        final doc = latestProgressSnap.docs.first;
+        latestProgress = QuestProgress.fromMap(doc.data(), doc.id);
+      }
     }
 
-    return _AchievementData(achievements: achievements, earnedIds: earnedIds);
+    final evaluator = const AchievementEvaluator();
+    final effectiveUser = userModel ??
+        UserModel(
+          id: userId ?? 'guest',
+          name: '',
+          email: '',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+        );
+    final effectiveProgress = latestProgress ??
+        QuestProgress(
+          id: 'none',
+          userId: userId ?? 'guest',
+          questId: '',
+          startedAt: DateTime.now(),
+          completedAt: DateTime.now(),
+        );
+
+    final progressByAchievement = <String, AchievementProgressSnapshot>{};
+    for (final achievement in achievements) {
+      progressByAchievement[achievement.id] = evaluator.evaluateProgress(
+        achievement: achievement,
+        user: effectiveUser,
+        progress: effectiveProgress,
+      );
+    }
+
+    return _AchievementData(
+      achievements: achievements,
+      earnedIds: earnedIds,
+      progressByAchievement: progressByAchievement,
+    );
   }
 
   static IconData _iconFromString(String name) {
@@ -186,5 +258,11 @@ class AchievementsScreen extends StatelessWidget {
 class _AchievementData {
   final List<Achievement> achievements;
   final List<String> earnedIds;
-  _AchievementData({required this.achievements, required this.earnedIds});
+  final Map<String, AchievementProgressSnapshot> progressByAchievement;
+
+  _AchievementData({
+    required this.achievements,
+    required this.earnedIds,
+    required this.progressByAchievement,
+  });
 }

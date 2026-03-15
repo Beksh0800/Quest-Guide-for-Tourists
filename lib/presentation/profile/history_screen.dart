@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -33,8 +35,10 @@ class HistoryScreen extends StatelessWidget {
           }
           if (snapshot.hasError) {
             return Center(
-                child: Text(
-                    '${AppLocalizations.of(context).error}: ${snapshot.error}'));
+              child: Text(
+                '${AppLocalizations.of(context).error}: ${snapshot.error}',
+              ),
+            );
           }
 
           final items = snapshot.data ?? [];
@@ -43,9 +47,11 @@ class HistoryScreen extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.history_rounded,
-                      size: 64,
-                      color: AppColors.textHint.withValues(alpha: 0.5)),
+                  Icon(
+                    Icons.history_rounded,
+                    size: 64,
+                    color: AppColors.textHint.withValues(alpha: 0.5),
+                  ),
                   const SizedBox(height: 12),
                   Text(AppLocalizations.of(context).noHistory),
                 ],
@@ -66,12 +72,15 @@ class HistoryScreen extends StatelessWidget {
                 totalDistance += item.quest!.distanceKm;
               }
               if (item.progress.completedAt != null) {
-                totalTime += item.progress.completedAt!.difference(item.progress.startedAt);
+                totalTime += item.progress.completedAt!
+                    .difference(item.progress.startedAt);
               }
             }
           }
 
-          final avgScore = completedQuests > 0 ? (totalPoints / completedQuests).round() : 0;
+          final avgScore =
+              completedQuests > 0 ? (totalPoints / completedQuests).round() : 0;
+          final weeklyActivity = _buildWeeklyActivity(context, items);
 
           return Column(
             children: [
@@ -81,103 +90,146 @@ class HistoryScreen extends StatelessWidget {
                 totalDistance: totalDistance,
                 totalTime: totalTime,
               ),
+              _HistoryActivityChart(data: weeklyActivity),
               Expanded(
                 child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   itemCount: items.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
                     final item = items[index];
-              final isCompleted = item.progress.status == QuestStatus.completed;
-              final color = isCompleted
-                  ? const Color(0xFF34A853)
-                  : const Color(0xFFFF6B35);
+                    final isCompleted =
+                        item.progress.status == QuestStatus.completed;
+                    final color = isCompleted
+                        ? const Color(0xFF34A853)
+                        : const Color(0xFFFF6B35);
 
-              return Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.divider),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
+                    return Container(
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(14),
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.divider),
                       ),
-                      child: Icon(
-                        isCompleted
-                            ? Icons.check_circle_rounded
-                            : Icons.timer_rounded,
-                        color: color,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Row(
                         children: [
-                          Text(
-                            item.quest?.title ??
-                                AppLocalizations.of(context).questFallbackTitle,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _formatDate(context, item.progress.startedAt),
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                          if (item.progress.completedAt != null) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              AppLocalizations.of(context).time(
-                                _formatDuration(
-                                    context,
-                                    item.progress.startedAt,
-                                    item.progress.completedAt),
-                              ),
-                              style: Theme.of(context).textTheme.bodySmall,
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(14),
                             ),
-                          ],
+                            child: Icon(
+                              isCompleted
+                                  ? Icons.check_circle_rounded
+                                  : Icons.timer_rounded,
+                              color: color,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.quest?.title ??
+                                      AppLocalizations.of(context)
+                                          .questFallbackTitle,
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _formatDate(context, item.progress.startedAt),
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                                if (item.progress.completedAt != null) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    AppLocalizations.of(context).time(
+                                      _formatDuration(
+                                        context,
+                                        item.progress.startedAt,
+                                        item.progress.completedAt,
+                                      ),
+                                    ),
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                '${item.progress.earnedPoints}',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      color: AppColors.primary,
+                                    ),
+                              ),
+                              Text(
+                                AppLocalizations.of(context).pointsLabel,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              if (item.progress.totalAnswers > 0) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${item.progress.correctAnswers}/${item.progress.totalAnswers}',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ],
+                          ),
                         ],
                       ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '${item.progress.earnedPoints}',
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    color: AppColors.primary,
-                                  ),
-                        ),
-                        Text(AppLocalizations.of(context).pointsLabel,
-                            style: Theme.of(context).textTheme.bodySmall),
-                        if (item.progress.totalAnswers > 0) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '${item.progress.correctAnswers}/${item.progress.totalAnswers}',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
+                    );
+                  },
                 ),
-              );
-            },
-          ),
               ),
             ],
           );
         },
       ),
     );
+  }
+
+  List<_DailyActivity> _buildWeeklyActivity(
+    BuildContext context,
+    List<_HistoryItem> items,
+  ) {
+    final locale = AppLocalizations.of(context).locale;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final bucket = <DateTime, int>{};
+    for (var offset = 6; offset >= 0; offset--) {
+      final date = today.subtract(Duration(days: offset));
+      bucket[date] = 0;
+    }
+
+    for (final item in items) {
+      final rawDate = item.progress.completedAt ?? item.progress.startedAt;
+      final day = DateTime(rawDate.year, rawDate.month, rawDate.day);
+      if (bucket.containsKey(day)) {
+        bucket[day] = (bucket[day] ?? 0) + 1;
+      }
+    }
+
+    return bucket.entries
+        .map(
+          (entry) => _DailyActivity(
+            label: DateFormat.E(locale).format(entry.key),
+            value: entry.value,
+          ),
+        )
+        .toList(growable: false);
   }
 
   Future<List<_HistoryItem>> _loadHistory(String userId) async {
@@ -214,7 +266,15 @@ class HistoryScreen extends StatelessWidget {
 class _HistoryItem {
   final QuestProgress progress;
   final Quest? quest;
+
   _HistoryItem({required this.progress, this.quest});
+}
+
+class _DailyActivity {
+  final String label;
+  final int value;
+
+  const _DailyActivity({required this.label, required this.value});
 }
 
 class _HistoryStatsSummary extends StatelessWidget {
@@ -233,11 +293,15 @@ class _HistoryStatsSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    
+
     String formatDuration() {
       if (totalTime.inHours > 0) {
-        return l10n.durationHoursMinutes(totalTime.inHours, totalTime.inMinutes.remainder(60));
-      } else if (totalTime.inMinutes > 0) {
+        return l10n.durationHoursMinutes(
+          totalTime.inHours,
+          totalTime.inMinutes.remainder(60),
+        );
+      }
+      if (totalTime.inMinutes > 0) {
         return l10n.durationMinutes(totalTime.inMinutes);
       }
       return '—';
@@ -252,13 +316,17 @@ class _HistoryStatsSummary extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.analytics_rounded, color: AppColors.primary, size: 20),
+                const Icon(
+                  Icons.analytics_rounded,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Text(
-                  'Общая статистика', // TODO: Localize
+                  'Общая статистика',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
               ],
             ),
@@ -268,28 +336,139 @@ class _HistoryStatsSummary extends StatelessWidget {
               children: [
                 _StatItem(
                   icon: Icons.check_circle_outline_rounded,
-                  label: 'Завершено', // TODO: Localize
+                  label: 'Завершено',
                   value: '$completedQuests',
                 ),
                 _StatItem(
                   icon: Icons.star_border_rounded,
-                  label: 'Ср. балл', // TODO: Localize
+                  label: 'Ср. балл',
                   value: '$avgScore',
                 ),
                 _StatItem(
                   icon: Icons.directions_walk_rounded,
-                  label: 'Пройдено', // TODO: Localize
+                  label: 'Пройдено',
                   value: '${totalDistance.toStringAsFixed(1)} км',
                 ),
                 _StatItem(
                   icon: Icons.timer_outlined,
-                  label: 'Время', // TODO: Localize
+                  label: 'Время',
                   value: formatDuration(),
                 ),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _HistoryActivityChart extends StatelessWidget {
+  final List<_DailyActivity> data;
+
+  const _HistoryActivityChart({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final maxValue = data.isEmpty
+        ? 1
+        : math.max(1, data.map((it) => it.value).reduce(math.max));
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+      child: GlassCard(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.show_chart_rounded,
+                    color: AppColors.primary, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Активность за 7 дней',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 112,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: data
+                    .map(
+                      (point) => Expanded(
+                        child: _ActivityBar(
+                          label: point.label,
+                          value: point.value,
+                          maxValue: maxValue,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityBar extends StatelessWidget {
+  final String label;
+  final int value;
+  final int maxValue;
+
+  const _ActivityBar({
+    required this.label,
+    required this.value,
+    required this.maxValue,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = value / maxValue;
+    final height = value == 0 ? 4.0 : 8 + (ratio * 56);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          Text(
+            '$value',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            height: height,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFF4C9AFF), AppColors.primary],
+              ),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.textHint,
+                ),
+          ),
+        ],
       ),
     );
   }
@@ -315,16 +494,16 @@ class _StatItem extends StatelessWidget {
         Text(
           value,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w600,
-          ),
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+              ),
         ),
         const SizedBox(height: 2),
         Text(
           label,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: AppColors.textHint,
-          ),
+                color: AppColors.textHint,
+              ),
         ),
       ],
     );

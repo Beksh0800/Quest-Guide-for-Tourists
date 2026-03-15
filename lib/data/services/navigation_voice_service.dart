@@ -8,6 +8,7 @@ class NavigationVoiceService {
   bool _enabled = true;
   bool _isAvailable = false;
   bool _initialized = false;
+  DateTime? _mutedUntil;
 
   String? _lastPromptKey;
   DateTime? _lastPromptAt;
@@ -18,6 +19,9 @@ class NavigationVoiceService {
 
   bool get isEnabled => _enabled;
   bool get isAvailable => _isAvailable;
+  bool get isTemporarilyMuted =>
+      _mutedUntil != null && DateTime.now().isBefore(_mutedUntil!);
+  bool get canSpeak => _enabled && !isTemporarilyMuted;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -36,6 +40,18 @@ class NavigationVoiceService {
 
   void setEnabled(bool value) {
     _enabled = value;
+    if (!_enabled) {
+      _mutedUntil = null;
+    }
+  }
+
+  void muteFor(Duration duration) {
+    if (duration <= Duration.zero) return;
+    _mutedUntil = DateTime.now().add(duration);
+  }
+
+  void clearMute() {
+    _mutedUntil = null;
   }
 
   Future<void> speak({
@@ -43,7 +59,7 @@ class NavigationVoiceService {
     required String promptKey,
     Duration dedupeWindow = const Duration(seconds: 25),
   }) async {
-    if (!_enabled) return;
+    if (!_enabled || isTemporarilyMuted) return;
 
     await initialize();
     if (!_isAvailable) return;

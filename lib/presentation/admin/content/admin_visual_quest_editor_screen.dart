@@ -38,7 +38,8 @@ class _AdminVisualQuestEditorScreenState
   // Basic quest fields
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
-  final TextEditingController _questImageUrlController = TextEditingController();
+  final TextEditingController _questImageUrlController =
+      TextEditingController();
   final TextEditingController _durationController = TextEditingController();
   final TextEditingController _distanceController = TextEditingController();
   final TextEditingController _pointsController = TextEditingController();
@@ -325,6 +326,15 @@ class _AdminVisualQuestEditorScreenState
       appBar: AppBar(
         title: Text('Визуальный редактор квеста'),
         actions: [
+          IconButton(
+            tooltip: 'JSON fallback',
+            onPressed: _saving
+                ? null
+                : () => context.go(
+                      '/admin/content/quest/${widget.questId}?mode=json',
+                    ),
+            icon: const Icon(Icons.data_object_rounded),
+          ),
           if (_saving)
             const Padding(
               padding: EdgeInsets.all(16.0),
@@ -523,9 +533,10 @@ class _AdminVisualQuestEditorScreenState
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
                           'Нажмите на изображение, чтобы открыть на весь экран',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppColors.textSecondary,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
                         ),
                       ),
                   ],
@@ -785,12 +796,27 @@ class _AdminVisualQuestEditorScreenState
                     ],
                   ),
                 )
-              : ListView.builder(
+              : ReorderableListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 104),
                   itemCount: _locations.length,
+                  onReorder: (oldIndex, newIndex) {
+                    setState(() {
+                      var targetIndex = newIndex;
+                      if (targetIndex > oldIndex) {
+                        targetIndex -= 1;
+                      }
+                      final moved = _locations.removeAt(oldIndex);
+                      _locations.insert(targetIndex, moved);
+                      for (var i = 0; i < _locations.length; i++) {
+                        _locations[i] = _locations[i].copyWith(order: i + 1);
+                      }
+                    });
+                  },
+                  buildDefaultDragHandles: false,
                   itemBuilder: (context, index) {
                     final location = _locations[index];
                     return Padding(
+                      key: ValueKey('location_${location.id}'),
                       padding: const EdgeInsets.only(bottom: 12),
                       child: GlassCard(
                         child: Padding(
@@ -839,6 +865,17 @@ class _AdminVisualQuestEditorScreenState
                                   Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
+                                      ReorderableDragStartListener(
+                                        index: index,
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                              horizontal: 4),
+                                          child: Icon(
+                                            Icons.drag_indicator_rounded,
+                                            color: AppColors.textSecondary,
+                                          ),
+                                        ),
+                                      ),
                                       IconButton(
                                         onPressed: () => _editLocation(index),
                                         icon: const Icon(Icons.edit_outlined),
@@ -995,9 +1032,10 @@ class _AdminVisualQuestEditorScreenState
                       const SizedBox(height: 16),
                       Text(
                         'Нет заданий',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: AppColors.textHint,
-                            ),
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: AppColors.textHint,
+                                ),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -1029,8 +1067,8 @@ class _AdminVisualQuestEditorScreenState
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color:
-                                          AppColors.primary.withValues(alpha: 0.1),
+                                      color: AppColors.primary
+                                          .withValues(alpha: 0.1),
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Text(
@@ -1055,7 +1093,8 @@ class _AdminVisualQuestEditorScreenState
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleMedium
-                                          ?.copyWith(fontWeight: FontWeight.bold),
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.bold),
                                     ),
                                   ),
                                 ],
@@ -1214,9 +1253,12 @@ class _AdminVisualQuestEditorScreenState
     final lngController =
         TextEditingController(text: location.longitude.toString());
     final imageUrlController = TextEditingController(text: location.imageUrl);
+    final audioUrlController =
+        TextEditingController(text: location.audioUrl ?? '');
     final selectedCity = KazakhstanCities.cityByName(_selectedCity);
     String? dialogError;
     bool uploadingImage = false;
+    bool uploadingAudio = false;
 
     showDialog(
       context: context,
@@ -1233,115 +1275,166 @@ class _AdminVisualQuestEditorScreenState
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                      if (dialogError != null) ...[
-                        _buildDialogErrorBanner(dialogError!),
-                        const SizedBox(height: 10),
-                      ],
-                      TextField(
-                        controller: nameController,
-                        decoration: const InputDecoration(labelText: 'Название'),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: descriptionController,
-                        decoration: const InputDecoration(labelText: 'Описание'),
-                      ),
-                      const SizedBox(height: 16),
-                      PremiumButton(
-                        text: 'Выбрать на карте',
-                        icon: Icons.map,
-                        onPressed: () async {
-                          final currentLat = double.tryParse(latController.text) ?? 0.0;
-                          final currentLng = double.tryParse(lngController.text) ?? 0.0;
-                          final selectedPosition = await Navigator.push<LatLng>(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => AdminMapPickerScreen(
-                                initialPosition: LatLng(currentLat, currentLng),
-                                cityCenter: LatLng(
-                                  selectedCity.latitude,
-                                  selectedCity.longitude,
-                                ),
-                              ),
+                  if (dialogError != null) ...[
+                    _buildDialogErrorBanner(dialogError!),
+                    const SizedBox(height: 10),
+                  ],
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Название'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: descriptionController,
+                    decoration: const InputDecoration(labelText: 'Описание'),
+                  ),
+                  const SizedBox(height: 16),
+                  PremiumButton(
+                    text: 'Выбрать на карте',
+                    icon: Icons.map,
+                    onPressed: () async {
+                      final currentLat =
+                          double.tryParse(latController.text) ?? 0.0;
+                      final currentLng =
+                          double.tryParse(lngController.text) ?? 0.0;
+                      final selectedPosition = await Navigator.push<LatLng>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => AdminMapPickerScreen(
+                            initialPosition: LatLng(currentLat, currentLng),
+                            cityCenter: LatLng(
+                              selectedCity.latitude,
+                              selectedCity.longitude,
                             ),
-                          );
+                          ),
+                        ),
+                      );
 
-                          if (selectedPosition != null) {
-                            setDialogState(() {
-                              latController.text = selectedPosition.latitude.toString();
-                              lngController.text = selectedPosition.longitude.toString();
-                            });
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: latController,
-                              decoration: const InputDecoration(labelText: 'Широта'),
-                              keyboardType: const TextInputType.numberWithOptions(
-                                signed: true,
-                                decimal: true,
-                              ),
-                            ),
+                      if (selectedPosition != null) {
+                        setDialogState(() {
+                          latController.text =
+                              selectedPosition.latitude.toString();
+                          lngController.text =
+                              selectedPosition.longitude.toString();
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: latController,
+                          decoration:
+                              const InputDecoration(labelText: 'Широта'),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            signed: true,
+                            decimal: true,
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: lngController,
-                              decoration: const InputDecoration(labelText: 'Долгота'),
-                              keyboardType: const TextInputType.numberWithOptions(
-                                signed: true,
-                                decimal: true,
-                              ),
-                            ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: lngController,
+                          decoration:
+                              const InputDecoration(labelText: 'Долгота'),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            signed: true,
+                            decimal: true,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: imageUrlController,
-                        decoration: const InputDecoration(labelText: 'URL картинки локации'),
-                      ),
-                      const SizedBox(height: 8),
-                      PremiumButton(
-                        text: 'Загрузить картинку локации',
-                        icon: Icons.image,
-                        isLoading: uploadingImage,
-                        onPressed: uploadingImage
-                            ? null
-                            : () async {
-                                setDialogState(() {
-                                  uploadingImage = true;
-                                  dialogError = null;
-                                });
-                                try {
-                                  final url = await _storageRepository.pickAndUploadImage(
-                                    folder: 'locations',
-                                  );
-                                  if (url != null && context.mounted) {
-                                    setDialogState(() {
-                                      imageUrlController.text = url;
-                                    });
-                                  }
-                                } catch (e) {
-                                  if (!context.mounted) return;
-                                  setDialogState(() {
-                                    dialogError = _formatUploadError(e);
-                                  });
-                                } finally {
-                                  if (context.mounted) {
-                                    setDialogState(() {
-                                      uploadingImage = false;
-                                    });
-                                  }
-                                }
-                              },
+                        ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: imageUrlController,
+                    decoration: const InputDecoration(
+                        labelText: 'URL картинки локации'),
+                  ),
+                  const SizedBox(height: 8),
+                  PremiumButton(
+                    text: 'Загрузить картинку локации',
+                    icon: Icons.image,
+                    isLoading: uploadingImage,
+                    onPressed: uploadingImage
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              uploadingImage = true;
+                              dialogError = null;
+                            });
+                            try {
+                              final url =
+                                  await _storageRepository.pickAndUploadImage(
+                                folder: 'locations',
+                              );
+                              if (url != null && context.mounted) {
+                                setDialogState(() {
+                                  imageUrlController.text = url;
+                                });
+                              }
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              setDialogState(() {
+                                dialogError = _formatUploadError(e);
+                              });
+                            } finally {
+                              if (context.mounted) {
+                                setDialogState(() {
+                                  uploadingImage = false;
+                                });
+                              }
+                            }
+                          },
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: audioUrlController,
+                    decoration: const InputDecoration(
+                      labelText: 'URL аудиогида',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  PremiumButton(
+                    text: 'Загрузить аудиогид',
+                    icon: Icons.audiotrack_rounded,
+                    isLoading: uploadingAudio,
+                    onPressed: uploadingAudio
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              uploadingAudio = true;
+                              dialogError = null;
+                            });
+                            try {
+                              final url =
+                                  await _storageRepository.pickAndUploadAudio(
+                                folder: 'audio-guides',
+                              );
+                              if (url != null && context.mounted) {
+                                setDialogState(() {
+                                  audioUrlController.text = url;
+                                });
+                              }
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              setDialogState(() {
+                                dialogError = _formatUploadError(e);
+                              });
+                            } finally {
+                              if (context.mounted) {
+                                setDialogState(() {
+                                  uploadingAudio = false;
+                                });
+                              }
+                            }
+                          },
+                  ),
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -1369,7 +1462,9 @@ class _AdminVisualQuestEditorScreenState
                       latitude: double.tryParse(latController.text) ?? 0.0,
                       longitude: double.tryParse(lngController.text) ?? 0.0,
                       imageUrl: imageUrlController.text.trim(),
-                      audioUrl: location.audioUrl,
+                      audioUrl: audioUrlController.text.trim().isEmpty
+                          ? null
+                          : audioUrlController.text.trim(),
                       taskId: location.taskId,
                       radiusMeters: location.radiusMeters,
                     );
@@ -1417,243 +1512,247 @@ class _AdminVisualQuestEditorScreenState
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                if (dialogError != null) ...[
-                  _buildDialogErrorBanner(dialogError!),
-                  const SizedBox(height: 10),
-                ],
-                TextField(
-                  controller: questionController,
-                  decoration: const InputDecoration(labelText: 'Вопрос'),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue:
-                      _locations.any((location) => location.id == selectedLocationId)
-                          ? selectedLocationId
-                          : null,
-                  decoration: const InputDecoration(labelText: 'Локация'),
-                  items: _locations
-                      .map(
-                        (location) => DropdownMenuItem(
-                          value: location.id,
-                          child: Text(
-                            location.name.trim().isNotEmpty
-                                ? location.name.trim()
-                                : 'Локация ${location.order}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    setDialogState(() {
-                      selectedLocationId = value ?? '';
-                      dialogError = null;
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: pointsController,
-                  decoration: const InputDecoration(labelText: 'Очки'),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<TaskType>(
-                  initialValue: selectedType,
-                  decoration: const InputDecoration(labelText: 'Тип задания'),
-                  items: TaskType.values.map((type) {
-                    return DropdownMenuItem(
-                      value: type,
-                      child: Text(_getTaskTypeLabel(type)),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setDialogState(() {
-                      selectedType = value;
-                      dialogError = null;
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: hintController,
-                  decoration:
-                      const InputDecoration(labelText: 'Подсказка (опц.)'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: correctController,
-                  decoration:
-                      const InputDecoration(labelText: 'Правильный ответ'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: timeLimitController,
-                  decoration:
-                      const InputDecoration(labelText: 'Лимит времени (сек)'),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: optionsController,
-                  minLines: 2,
-                  maxLines: 5,
-                  decoration: const InputDecoration(
-                    labelText: 'Варианты ответа (по одному в строке)',
+                  if (dialogError != null) ...[
+                    _buildDialogErrorBanner(dialogError!),
+                    const SizedBox(height: 10),
+                  ],
+                  TextField(
+                    controller: questionController,
+                    decoration: const InputDecoration(labelText: 'Вопрос'),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: imageUrlController,
-                  decoration:
-                      const InputDecoration(labelText: 'URL картинки задания'),
-                ),
-                const SizedBox(height: 8),
-                PremiumButton(
-                  text: 'Загрузить картинку задания',
-                  icon: Icons.image,
-                  isLoading: uploadingImage,
-                  onPressed: uploadingImage
-                      ? null
-                      : () async {
-                          setDialogState(() {
-                            uploadingImage = true;
-                            dialogError = null;
-                          });
-                          try {
-                            final url = await _storageRepository.pickAndUploadImage(
-                              folder: 'tasks',
-                            );
-                            if (url != null && context.mounted) {
-                              setDialogState(() {
-                                imageUrlController.text = url;
-                              });
-                            }
-                          } catch (e) {
-                            if (!context.mounted) return;
-                            setDialogState(() {
-                              dialogError = _formatUploadError(e);
-                            });
-                          } finally {
-                            if (context.mounted) {
-                              setDialogState(() {
-                                uploadingImage = false;
-                              });
-                            }
-                          }
-                        },
-                ),
-                if (imageUrlController.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: _locations.any(
+                            (location) => location.id == selectedLocationId)
+                        ? selectedLocationId
+                        : null,
+                    decoration: const InputDecoration(labelText: 'Локация'),
+                    items: _locations
+                        .map(
+                          (location) => DropdownMenuItem(
+                            value: location.id,
+                            child: Text(
+                              location.name.trim().isNotEmpty
+                                  ? location.name.trim()
+                                  : 'Локация ${location.order}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        selectedLocationId = value ?? '';
+                        dialogError = null;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: pointsController,
+                    decoration: const InputDecoration(labelText: 'Очки'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<TaskType>(
+                    initialValue: selectedType,
+                    decoration: const InputDecoration(labelText: 'Тип задания'),
+                    items: TaskType.values.map((type) {
+                      return DropdownMenuItem(
+                        value: type,
+                        child: Text(_getTaskTypeLabel(type)),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setDialogState(() {
+                        selectedType = value;
+                        dialogError = null;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: hintController,
+                    decoration:
+                        const InputDecoration(labelText: 'Подсказка (опц.)'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: correctController,
+                    decoration:
+                        const InputDecoration(labelText: 'Правильный ответ'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: timeLimitController,
+                    decoration:
+                        const InputDecoration(labelText: 'Лимит времени (сек)'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: optionsController,
+                    minLines: 2,
+                    maxLines: 5,
+                    decoration: const InputDecoration(
+                      labelText: 'Варианты ответа (по одному в строке)',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: imageUrlController,
+                    decoration: const InputDecoration(
+                        labelText: 'URL картинки задания'),
+                  ),
                   const SizedBox(height: 8),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _openImageViewer(imageUrlController.text),
-                    child: ClipRRect(
+                  PremiumButton(
+                    text: 'Загрузить картинку задания',
+                    icon: Icons.image,
+                    isLoading: uploadingImage,
+                    onPressed: uploadingImage
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              uploadingImage = true;
+                              dialogError = null;
+                            });
+                            try {
+                              final url =
+                                  await _storageRepository.pickAndUploadImage(
+                                folder: 'tasks',
+                              );
+                              if (url != null && context.mounted) {
+                                setDialogState(() {
+                                  imageUrlController.text = url;
+                                });
+                              }
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              setDialogState(() {
+                                dialogError = _formatUploadError(e);
+                              });
+                            } finally {
+                              if (context.mounted) {
+                                setDialogState(() {
+                                  uploadingImage = false;
+                                });
+                              }
+                            }
+                          },
+                  ),
+                  if (imageUrlController.text.trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        imageUrlController.text.trim(),
-                        width: double.infinity,
-                        height: 120,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
+                      onTap: () => _openImageViewer(imageUrlController.text),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          imageUrlController.text.trim(),
                           width: double.infinity,
                           height: 120,
-                          color: AppColors.surfaceVariant,
-                          child: const Icon(
-                            Icons.image_not_supported_outlined,
-                            color: AppColors.textSecondary,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: double.infinity,
+                            height: 120,
+                            color: AppColors.surfaceVariant,
+                            child: const Icon(
+                              Icons.image_not_supported_outlined,
+                              color: AppColors.textSecondary,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Нажмите на изображение, чтобы открыть на весь экран',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                  ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Нажмите на изображение, чтобы открыть на весь экран',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                    ),
+                  ],
                 ],
-                    ],
-                  ),
+              ),
             ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
-            ),
-            TextButton(
-              onPressed: () {
-                final question = questionController.text.trim();
-                final points = int.tryParse(pointsController.text.trim()) ?? 10;
-                final timeLimit = int.tryParse(timeLimitController.text.trim()) ?? 0;
-                final options = optionsController.text
-                    .split('\n')
-                    .map((option) => option.trim())
-                    .where((option) => option.isNotEmpty)
-                    .toList(growable: false);
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Отмена'),
+              ),
+              TextButton(
+                onPressed: () {
+                  final question = questionController.text.trim();
+                  final points =
+                      int.tryParse(pointsController.text.trim()) ?? 10;
+                  final timeLimit =
+                      int.tryParse(timeLimitController.text.trim()) ?? 0;
+                  final options = optionsController.text
+                      .split('\n')
+                      .map((option) => option.trim())
+                      .where((option) => option.isNotEmpty)
+                      .toList(growable: false);
 
-                if (question.isEmpty) {
-                  setDialogState(() {
-                    dialogError = 'Вопрос задания не может быть пустым.';
-                  });
-                  return;
-                }
-                if (selectedLocationId.trim().isEmpty) {
-                  setDialogState(() {
-                    dialogError = 'Выберите локацию для задания.';
-                  });
-                  return;
-                }
-                if (points <= 0) {
-                  setDialogState(() {
-                    dialogError = 'Очки задания должны быть больше 0.';
-                  });
-                  return;
-                }
-                if (timeLimit < 0) {
-                  setDialogState(() {
-                    dialogError = 'Лимит времени не может быть отрицательным.';
-                  });
-                  return;
-                }
-
-                setState(() {
-                  _tasks[index] = QuestTask(
-                    id: task.id,
-                    locationId: selectedLocationId,
-                    type: selectedType,
-                    question: question,
-                    hint: hintController.text.trim().isEmpty
-                        ? null
-                        : hintController.text.trim(),
-                    points: points,
-                    options: options,
-                    correctOptionIndex: task.correctOptionIndex,
-                    correctAnswer: correctController.text.trim(),
-                    timeLimitSeconds: timeLimit,
-                    imageUrl: imageUrlController.text.trim().isEmpty
-                        ? null
-                        : imageUrlController.text.trim(),
-                  );
-
-                  // Проставляем taskId у выбранной локации, если он еще пуст.
-                  for (var i = 0; i < _locations.length; i++) {
-                    if (_locations[i].id == selectedLocationId &&
-                        _locations[i].taskId.isEmpty) {
-                      _locations[i] = _locations[i].copyWith(taskId: task.id);
-                    }
+                  if (question.isEmpty) {
+                    setDialogState(() {
+                      dialogError = 'Вопрос задания не может быть пустым.';
+                    });
+                    return;
                   }
-                });
-                Navigator.pop(context);
-              },
-              child: const Text('Сохранить'),
-            ),
-          ],
+                  if (selectedLocationId.trim().isEmpty) {
+                    setDialogState(() {
+                      dialogError = 'Выберите локацию для задания.';
+                    });
+                    return;
+                  }
+                  if (points <= 0) {
+                    setDialogState(() {
+                      dialogError = 'Очки задания должны быть больше 0.';
+                    });
+                    return;
+                  }
+                  if (timeLimit < 0) {
+                    setDialogState(() {
+                      dialogError =
+                          'Лимит времени не может быть отрицательным.';
+                    });
+                    return;
+                  }
+
+                  setState(() {
+                    _tasks[index] = QuestTask(
+                      id: task.id,
+                      locationId: selectedLocationId,
+                      type: selectedType,
+                      question: question,
+                      hint: hintController.text.trim().isEmpty
+                          ? null
+                          : hintController.text.trim(),
+                      points: points,
+                      options: options,
+                      correctOptionIndex: task.correctOptionIndex,
+                      correctAnswer: correctController.text.trim(),
+                      timeLimitSeconds: timeLimit,
+                      imageUrl: imageUrlController.text.trim().isEmpty
+                          ? null
+                          : imageUrlController.text.trim(),
+                    );
+
+                    // Проставляем taskId у выбранной локации, если он еще пуст.
+                    for (var i = 0; i < _locations.length; i++) {
+                      if (_locations[i].id == selectedLocationId &&
+                          _locations[i].taskId.isEmpty) {
+                        _locations[i] = _locations[i].copyWith(taskId: task.id);
+                      }
+                    }
+                  });
+                  Navigator.pop(context);
+                },
+                child: const Text('Сохранить'),
+              ),
+            ],
           );
         },
       ),

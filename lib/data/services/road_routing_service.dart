@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:quest_guide/domain/models/navigation_route.dart';
 
@@ -31,7 +32,7 @@ abstract class RoadRoutingService {
 
 /// Runtime-конфиг для Google Directions API.
 ///
-/// Значения читаются из --dart-define:
+/// Значения читаются из .env, затем fallback на --dart-define:
 /// - GOOGLE_DIRECTIONS_API_KEY (приоритет)
 /// - GOOGLE_API_KEY (fallback)
 class GoogleDirectionsRoutingConfig {
@@ -51,9 +52,19 @@ class GoogleDirectionsRoutingConfig {
   });
 
   factory GoogleDirectionsRoutingConfig.fromEnvironment() {
-    return const GoogleDirectionsRoutingConfig(
-      directionsApiKey: String.fromEnvironment(directionsApiKeyDefineKey),
-      fallbackGoogleApiKey: String.fromEnvironment(googleApiKeyDefineKey),
+    final envDirectionsKey =
+        (dotenv.env[directionsApiKeyDefineKey] ?? '').trim();
+    final envGoogleApiKey = (dotenv.env[googleApiKeyDefineKey] ?? '').trim();
+
+    const defineDirectionsKey =
+        String.fromEnvironment(directionsApiKeyDefineKey);
+    const defineGoogleApiKey = String.fromEnvironment(googleApiKeyDefineKey);
+
+    return GoogleDirectionsRoutingConfig(
+      directionsApiKey:
+          envDirectionsKey.isNotEmpty ? envDirectionsKey : defineDirectionsKey,
+      fallbackGoogleApiKey:
+          envGoogleApiKey.isNotEmpty ? envGoogleApiKey : defineGoogleApiKey,
     );
   }
 

@@ -16,6 +16,7 @@ import 'package:quest_guide/presentation/profile/profile_screen.dart';
 import 'package:quest_guide/presentation/profile/achievements_screen.dart';
 import 'package:quest_guide/presentation/profile/history_screen.dart';
 import 'package:quest_guide/presentation/admin/content/admin_content_screen.dart';
+import 'package:quest_guide/presentation/admin/content/admin_quest_editor_screen.dart';
 import 'package:quest_guide/presentation/admin/content/admin_visual_quest_editor_screen.dart';
 import 'package:quest_guide/presentation/admin/moderation/admin_moderation_queue_screen.dart';
 
@@ -219,8 +220,12 @@ class AppRouter {
           path: AppRoutes.adminQuestEditor,
           pageBuilder: (context, state) {
             final questId = state.pathParameters['questId']!;
+            final mode = state.uri.queryParameters['mode'] ?? 'visual';
+            final useJsonMode = mode == 'json';
             return MaterialPage(
-              child: AdminVisualQuestEditorScreen(questId: questId),
+              child: useJsonMode
+                  ? AdminQuestEditorScreen(questId: questId)
+                  : AdminVisualQuestEditorScreen(questId: questId),
             );
           },
         ),
