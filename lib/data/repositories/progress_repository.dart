@@ -106,6 +106,7 @@ class ProgressRepository {
     required String userId,
     required String questId,
     int initialLocationIndex = 0,
+    QuestRunStage initialStage = QuestRunStage.navigating,
   }) async {
     return _runWithFallback(
       remote: () async {
@@ -115,6 +116,7 @@ class ProgressRepository {
           id: doc.id,
           userId: userId,
           questId: questId,
+          currentStage: initialStage,
           currentLocationIndex: initialLocationIndex,
           startedAt: now,
           lastUpdatedAt: now,
@@ -129,6 +131,7 @@ class ProgressRepository {
           id: 'local_${now.microsecondsSinceEpoch}_${_localStore.length}',
           userId: userId,
           questId: questId,
+          currentStage: initialStage,
           currentLocationIndex: initialLocationIndex,
           startedAt: now,
           lastUpdatedAt: now,
@@ -157,6 +160,70 @@ class ProgressRepository {
     );
   }
 
+  Future<QuestProgress?> transitionToNavigating({
+    required String progressId,
+    required int locationIndex,
+  }) {
+    return _transitionStage(
+      progressId: progressId,
+      nextStage: QuestRunStage.navigating,
+      locationIndex: locationIndex,
+    );
+  }
+
+  Future<QuestProgress?> transitionToTask({
+    required String progressId,
+    required int locationIndex,
+  }) {
+    return _transitionStage(
+      progressId: progressId,
+      nextStage: QuestRunStage.task,
+      locationIndex: locationIndex,
+    );
+  }
+
+  Future<QuestProgress?> _transitionStage({
+    required String progressId,
+    required QuestRunStage nextStage,
+    required int locationIndex,
+  }) async {
+    return _runWithFallback(
+      remote: () async {
+        final doc = await _progressRef.doc(progressId).get();
+        if (!doc.exists) return null;
+
+        final current = QuestProgress.fromMap(doc.data()!, doc.id);
+        if (current.status != QuestStatus.inProgress) return current;
+
+        final updated = current.copyWith(
+          currentStage: nextStage,
+          currentLocationIndex: locationIndex,
+          lastUpdatedAt: DateTime.now(),
+        );
+
+        await _progressRef.doc(progressId).set(
+              updated.toMap(),
+              SetOptions(merge: true),
+            );
+        _emitLocal(updated);
+        return updated;
+      },
+      local: () async {
+        final current = _localStore[progressId];
+        if (current == null) return null;
+        if (current.status != QuestStatus.inProgress) return current;
+
+        final updated = current.copyWith(
+          currentStage: nextStage,
+          currentLocationIndex: locationIndex,
+          lastUpdatedAt: DateTime.now(),
+        );
+        _emitLocal(updated);
+        return updated;
+      },
+    );
+  }
+
   /// Завершить квест
   Future<bool> completeQuest({
     required String progressId,
@@ -180,6 +247,7 @@ class ProgressRepository {
           final now = DateTime.now().toIso8601String();
           transaction.update(ref, {
             'status': QuestStatus.completed.name,
+            'currentStage': QuestRunStage.completed.name,
             'earnedPoints': finalPoints,
             'timeBonusPoints': timeBonusPoints,
             'correctAnswers': correctAnswers,
@@ -208,6 +276,7 @@ class ProgressRepository {
 
         final updated = current.copyWith(
           status: QuestStatus.completed,
+          currentStage: QuestRunStage.completed,
           earnedPoints: finalPoints,
           timeBonusPoints: timeBonusPoints,
           correctAnswers: correctAnswers,
@@ -316,6 +385,38 @@ class ProgressRepository {
             .toList()
           ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
         return history;
+      },
+    );
+  }
+
+  Future<QuestProgress?> getLatestActiveProgressForUser(String userId) async {
+    return _runWithFallback(
+      remote: () async {
+        final snapshot = await _progressRef
+            .where('userId', isEqualTo: userId)
+            .where('status', isEqualTo: QuestStatus.inProgress.name)
+            .orderBy('lastUpdatedAt', descending: true)
+            .limit(1)
+            .get();
+
+        if (snapshot.docs.isEmpty) return null;
+
+        final doc = snapshot.docs.first;
+        final progress = QuestProgress.fromMap(doc.data(), doc.id);
+        _emitLocal(progress);
+        return progress;
+      },
+      local: () async {
+        final active = _localStore.values
+            .where(
+              (progress) =>
+                  progress.userId == userId &&
+                  progress.status == QuestStatus.inProgress,
+            )
+            .toList(growable: false)
+          ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+
+        return active.isEmpty ? null : active.first;
       },
     );
   }

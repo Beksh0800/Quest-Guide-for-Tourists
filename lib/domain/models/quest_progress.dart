@@ -7,6 +7,7 @@ class QuestProgress extends Equatable {
   final String userId;
   final String questId;
   final QuestStatus status;
+  final QuestRunStage currentStage;
   final int currentLocationIndex; // Текущая точка маршрута
   final int earnedPoints;
   final int timeBonusPoints;
@@ -23,6 +24,7 @@ class QuestProgress extends Equatable {
     required this.userId,
     required this.questId,
     this.status = QuestStatus.inProgress,
+    this.currentStage = QuestRunStage.navigating,
     this.currentLocationIndex = 0,
     this.earnedPoints = 0,
     this.timeBonusPoints = 0,
@@ -61,6 +63,10 @@ class QuestProgress extends Equatable {
         (e) => e.name == (map['status'] as String? ?? 'inProgress'),
         orElse: () => QuestStatus.inProgress,
       ),
+      currentStage: QuestRunStage.values.firstWhere(
+        (e) => e.name == (map['currentStage'] as String? ?? 'navigating'),
+        orElse: () => QuestRunStage.navigating,
+      ),
       currentLocationIndex: map['currentLocationIndex'] as int? ?? 0,
       earnedPoints: map['earnedPoints'] as int? ?? 0,
       timeBonusPoints: map['timeBonusPoints'] as int? ?? 0,
@@ -68,13 +74,11 @@ class QuestProgress extends Equatable {
       totalAnswers: map['totalAnswers'] as int? ?? 0,
       completedTaskIds: List<String>.from(map['completedTaskIds'] ?? []),
       taskAnswers: _parseTaskAnswers(map['taskAnswers']),
-      startedAt: DateTime.tryParse(map['startedAt'] ?? '') ?? DateTime.now(),
-      lastUpdatedAt: DateTime.tryParse(map['lastUpdatedAt'] ?? '') ??
-          DateTime.tryParse(map['startedAt'] ?? '') ??
+      startedAt: _parseDateTime(map['startedAt']) ?? DateTime.now(),
+      lastUpdatedAt: _parseDateTime(map['lastUpdatedAt']) ??
+          _parseDateTime(map['startedAt']) ??
           DateTime.now(),
-      completedAt: map['completedAt'] != null
-          ? DateTime.tryParse(map['completedAt'] as String)
-          : null,
+      completedAt: _parseDateTime(map['completedAt']),
     );
   }
 
@@ -83,6 +87,7 @@ class QuestProgress extends Equatable {
       'userId': userId,
       'questId': questId,
       'status': status.name,
+      'currentStage': currentStage.name,
       'currentLocationIndex': currentLocationIndex,
       'earnedPoints': earnedPoints,
       'timeBonusPoints': timeBonusPoints,
@@ -100,6 +105,7 @@ class QuestProgress extends Equatable {
 
   QuestProgress copyWith({
     QuestStatus? status,
+    QuestRunStage? currentStage,
     int? currentLocationIndex,
     int? earnedPoints,
     int? timeBonusPoints,
@@ -115,6 +121,7 @@ class QuestProgress extends Equatable {
       userId: userId,
       questId: questId,
       status: status ?? this.status,
+      currentStage: currentStage ?? this.currentStage,
       currentLocationIndex: currentLocationIndex ?? this.currentLocationIndex,
       earnedPoints: earnedPoints ?? this.earnedPoints,
       timeBonusPoints: timeBonusPoints ?? this.timeBonusPoints,
@@ -154,12 +161,35 @@ class QuestProgress extends Equatable {
     return parsed;
   }
 
+  static DateTime? _parseDateTime(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw);
+    if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+    if (raw is Map<String, dynamic>) {
+      final seconds = raw['_seconds'] as int?;
+      if (seconds != null) {
+        return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+      }
+    }
+
+    try {
+      final dynamic toDate = (raw as dynamic).toDate();
+      if (toDate is DateTime) return toDate;
+    } catch (_) {
+      // ignore and fallback below
+    }
+
+    return DateTime.tryParse(raw.toString());
+  }
+
   @override
   List<Object?> get props => [
         id,
         userId,
         questId,
         status,
+        currentStage,
         currentLocationIndex,
         earnedPoints,
         timeBonusPoints,
@@ -174,3 +204,6 @@ class QuestProgress extends Equatable {
 }
 
 enum QuestStatus { inProgress, completed, abandoned }
+
+enum QuestRunStage { navigating, task, completed }
+

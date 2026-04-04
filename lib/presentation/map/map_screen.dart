@@ -40,6 +40,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final TargetArrivalTracker _arrivalTracker = TargetArrivalTracker();
 
   List<QuestLocation> _locations = [];
+  QuestProgress? _activeProgress;
   Position? _currentPosition;
   StreamSubscription<Position>? _positionSub;
   Timer? _gpsStatusTicker;
@@ -103,10 +104,73 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _awaitingSettingsReturn) {
-      _awaitingSettingsReturn = false;
-      unawaited(_retryLocationSetup());
+    if (state == AppLifecycleState.resumed) {
+      if (_awaitingSettingsReturn) {
+        _awaitingSettingsReturn = false;
+        unawaited(_retryLocationSetup());
+        return;
+      }
+
+      unawaited(_restoreQuestRunOnResume());
     }
+  }
+
+  Future<void> _restoreQuestRunOnResume() async {
+    if (!mounted || _locations.isEmpty) return;
+
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) {
+      await _retryLocationSetup();
+      return;
+    }
+
+    final progress =
+        await _progressRepo.getActiveProgress(userId, widget.questId);
+    if (!mounted) return;
+
+    if (progress != null) {
+      if (progress.currentStage == QuestRunStage.task) {
+        context.go(
+            '/quest/${widget.questId}/task/${progress.currentLocationIndex}');
+        return;
+      }
+
+      final normalizedIndex =
+          progress.currentLocationIndex.clamp(0, _locations.length - 1);
+      final indexChanged = normalizedIndex != _activeIndex;
+
+      if (indexChanged) {
+        setState(() {
+          _activeProgress = progress;
+          _activeIndex = normalizedIndex;
+          _activeRoute = null;
+          _currentStepIndex = 0;
+          _routeError = null;
+          _isOffRoute = false;
+          _offRouteDistanceMeters = null;
+          _directionsApiUnavailable = false;
+        });
+        await _centerOnActivePoint();
+      } else {
+        setState(() {
+          _activeProgress = progress;
+        });
+      }
+    }
+
+    await _retryLocationSetup();
+
+    if (!mounted || _currentPosition == null || _locations.isEmpty) return;
+
+    final target = _locations[_activeIndex];
+    await _requestRoadRoute(
+      origin: _positionToPoint(_currentPosition!),
+      destination: NavigationPoint(
+        latitude: target.latitude,
+        longitude: target.longitude,
+      ),
+      reason: 'initial',
+    );
   }
 
   Future<void> _load() async {
@@ -133,7 +197,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           userId: userId,
           questId: widget.questId,
           initialLocationIndex: 0,
+          initialStage: QuestRunStage.navigating,
         );
+
+        if (progress.currentStage == QuestRunStage.task) {
+          if (!mounted) return;
+          context.go(
+              '/quest/${widget.questId}/task/${progress.currentLocationIndex}');
+          return;
+        }
       }
 
       final activeIndex =
@@ -143,6 +215,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _arrivalTracker.reset();
       setState(() {
         _locations = locations;
+        _activeProgress = progress;
         _activeIndex = activeIndex;
         _loading = false;
         _routeError = null;
@@ -868,6 +941,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _goToTask() async {
+    final progress = _activeProgress;
+    if (progress != null) {
+      await _progressRepo.transitionToTask(
+        progressId: progress.id,
+        locationIndex: _activeIndex,
+      );
+    }
+    if (!mounted) return;
     context.go('/quest/${widget.questId}/task/$_activeIndex');
   }
 
@@ -981,6 +1062,57 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         reason: 'initial',
       ));
     }
+  }
+
+  Future<void> _manualRefreshRoute() async {
+    if (_currentPosition == null || _locations.isEmpty) return;
+    final target = _locations[_activeIndex];
+    await _requestRoadRoute(
+      origin: _positionToPoint(_currentPosition!),
+      destination: NavigationPoint(
+        latitude: target.latitude,
+        longitude: target.longitude,
+      ),
+      reason: 'manual',
+    );
+  }
+
+  Future<void> _focusRouteOrTarget() async {
+    final route = _activeRoute;
+    if (route != null && route.polylinePoints.isNotEmpty) {
+      await _fitRouteIntoView(route.polylinePoints);
+      return;
+    }
+    await _centerOnActivePoint();
+  }
+
+  Widget _buildRouteQuickActions(AppLocalizations l10n) {
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed:
+                _routeLoading ? null : () => unawaited(_manualRefreshRoute()),
+            icon: _routeLoading
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded, size: 16),
+            label: Text(l10n.retry),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => unawaited(_focusRouteOrTarget()),
+            icon: const Icon(Icons.center_focus_strong_rounded, size: 16),
+            label: Text(l10n.mapRoute),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildRouteSummary(AppLocalizations l10n) {
@@ -1305,39 +1437,66 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final l10n = AppLocalizations.of(context);
 
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          context.go('/home');
+        },
+        child: const Scaffold(body: Center(child: CircularProgressIndicator())),
+      );
     }
 
     if (_error != null) {
       final isServiceDisabled = _error == l10n.locationServiceDisabled;
       final isPermissionDenied = _error == l10n.locationPermissionDenied;
-      return Scaffold(
-        appBar: AppBar(title: Text(l10n.mapTitle)),
-        body: (isServiceDisabled || isPermissionDenied)
-            ? _buildLocationErrorState(
-                context,
-                l10n: l10n,
-                serviceDisabled: isServiceDisabled,
-                permissionDenied: isPermissionDenied,
-              )
-            : Center(child: Text(_error!)),
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          context.go('/home');
+        },
+        child: Scaffold(
+          appBar: AppBar(title: Text(l10n.mapTitle)),
+          body: (isServiceDisabled || isPermissionDenied)
+              ? _buildLocationErrorState(
+                  context,
+                  l10n: l10n,
+                  serviceDisabled: isServiceDisabled,
+                  permissionDenied: isPermissionDenied,
+                )
+              : Center(child: Text(_error!)),
+        ),
       );
     }
 
     if (_locations.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(title: Text(l10n.mapTitle)),
-        body: Center(child: Text(l10n.noLocations)),
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          context.go('/home');
+        },
+        child: Scaffold(
+          appBar: AppBar(title: Text(l10n.mapTitle)),
+          body: Center(child: Text(l10n.noLocations)),
+        ),
       );
     }
 
     final target = _locations[_activeIndex];
     final canStartTask = _isWithinTargetRadius || _devOverride;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.mapTitle),
-        actions: [
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        context.go('/home');
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(l10n.mapTitle),
+          actions: [
           IconButton(
             onPressed: _toggleVoiceHints,
             tooltip:
@@ -1374,8 +1533,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: Stack(
-        children: [
+        body: Stack(
+          children: [
           GoogleMap(
             onMapCreated: (controller) {
               _mapController = controller;
@@ -1537,6 +1696,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         const SizedBox(height: 8),
                         _buildRouteSummary(l10n),
                         const SizedBox(height: 8),
+                        _buildRouteQuickActions(l10n),
+                        const SizedBox(height: 8),
                         _buildRouteStatusBanners(l10n),
                         _buildTurnByTurnCard(l10n),
                         const SizedBox(height: 8),
@@ -1590,7 +1751,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

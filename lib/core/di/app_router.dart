@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:quest_guide/core/l10n/app_localizations.dart';
 import 'package:quest_guide/core/security/access_control.dart';
+import 'package:quest_guide/data/repositories/progress_repository.dart';
 import 'package:quest_guide/data/services/auth_service.dart';
+import 'package:quest_guide/domain/models/quest_progress.dart';
 import 'package:quest_guide/presentation/auth/login_screen.dart';
 import 'package:quest_guide/presentation/auth/register_screen.dart';
 import 'package:quest_guide/presentation/home/home_screen.dart';
@@ -19,6 +21,7 @@ import 'package:quest_guide/presentation/admin/content/admin_content_screen.dart
 import 'package:quest_guide/presentation/admin/content/admin_quest_editor_screen.dart';
 import 'package:quest_guide/presentation/admin/content/admin_visual_quest_editor_screen.dart';
 import 'package:quest_guide/presentation/admin/moderation/admin_moderation_queue_screen.dart';
+import 'package:quest_guide/presentation/admin/stats/admin_user_stats_screen.dart';
 
 class AppRoutes {
   static const String login = '/login';
@@ -34,6 +37,7 @@ class AppRoutes {
   static const String adminContent = '/admin/content';
   static const String adminQuestEditor = '/admin/content/quest/:questId';
   static const String adminModerationQueue = '/admin/moderation';
+  static const String adminUserStats = '/admin/stats';
 
   static const String adminDeniedQueryParam = 'denied';
   static const String adminDeniedQueryValue = 'admin';
@@ -58,11 +62,49 @@ class AppRouter {
     return null;
   }
 
-  static GoRouter createRouter(AuthService authService) {
+  @visibleForTesting
+  static String? resolveResumeLocation(QuestProgress? progress) {
+    if (progress == null || progress.status != QuestStatus.inProgress) {
+      return null;
+    }
+
+    switch (progress.currentStage) {
+      case QuestRunStage.task:
+        return '/quest/${progress.questId}/task/${progress.currentLocationIndex}';
+      case QuestRunStage.navigating:
+        return '/quest/${progress.questId}/map';
+      case QuestRunStage.completed:
+        return null;
+    }
+  }
+
+  static Future<String> resolveInitialLocation(
+    AuthService? authService, {
+    ProgressRepository? progressRepository,
+    String? userIdOverride,
+  }) async {
+    final userId = userIdOverride ?? authService?.currentUser?.uid;
+    if (userId == null) {
+      return AppRoutes.home;
+    }
+
+    try {
+      final repo = progressRepository ?? ProgressRepository();
+      final progress = await repo.getLatestActiveProgressForUser(userId);
+      return resolveResumeLocation(progress) ?? AppRoutes.home;
+    } catch (_) {
+      return AppRoutes.home;
+    }
+  }
+
+  static GoRouter createRouter(
+    AuthService authService, {
+    String initialLocation = AppRoutes.home,
+  }) {
     final refresh = GoRouterRefreshStream(authService.authStateChanges);
 
     return GoRouter(
-      initialLocation: AppRoutes.home,
+      initialLocation: initialLocation,
       refreshListenable: refresh,
       redirect: (context, state) async {
         final loggedIn = authService.currentUser != null;
@@ -89,9 +131,14 @@ class AppRouter {
           );
         }
 
-        final isAdmin = await authService.isCurrentUserAdmin();
+        final userModel = await authService.getCurrentUserModel();
+        final isAdmin = userModel != null &&
+            AccessControl.hasAdminAccess(
+              isAdminFlag: userModel.isAdmin,
+              role: userModel.role,
+            );
         if (isAdmin && path == AppRoutes.adminModerationQueue) {
-          final isSuperuser = await authService.isCurrentUserSuperuser();
+          final isSuperuser = AccessControl.isSuperuserRole(userModel.role);
           if (!isSuperuser) {
             return AppRoutes.profileAdminDeniedLocation;
           }
@@ -233,6 +280,11 @@ class AppRouter {
           path: AppRoutes.adminModerationQueue,
           pageBuilder: (context, state) =>
               const MaterialPage(child: AdminModerationQueueScreen()),
+        ),
+        GoRoute(
+          path: AppRoutes.adminUserStats,
+          pageBuilder: (context, state) =>
+              const MaterialPage(child: AdminUserStatsScreen()),
         ),
       ],
       errorBuilder: (context, state) => Scaffold(

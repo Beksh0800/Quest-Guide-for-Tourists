@@ -219,6 +219,158 @@ class _AdminVisualQuestEditorScreenState
     return null;
   }
 
+  List<String> _collectBlockingIssues() {
+    final issues = <String>[];
+
+    if (_locations.isEmpty) {
+      issues.add('Нет ни одной локации.');
+    }
+    if (_tasks.isEmpty) {
+      issues.add('Нет ни одного задания.');
+    }
+
+    final locationIds = <String>{};
+    for (final location in _locations) {
+      if (!locationIds.add(location.id)) {
+        issues.add('Дублирующийся id локации: ${location.id}');
+      }
+      if (location.name.trim().isEmpty) {
+        issues.add('Локация без названия: ${location.id}');
+      }
+    }
+
+    final taskIds = <String>{};
+    for (final task in _tasks) {
+      if (!taskIds.add(task.id)) {
+        issues.add('Дублирующийся id задания: ${task.id}');
+      }
+      if (task.question.trim().isEmpty) {
+        issues.add('Задание без текста вопроса: ${task.id}');
+      }
+      if (task.locationId.trim().isEmpty ||
+          !locationIds.contains(task.locationId)) {
+        issues.add('Задание ${task.id} привязано к несуществующей локации.');
+      }
+    }
+
+    return issues;
+  }
+
+  List<String> _collectWarnings() {
+    final warnings = <String>[];
+    final taskIds = _tasks.map((e) => e.id).toSet();
+
+    for (final location in _locations) {
+      if (location.taskId.trim().isEmpty) {
+        warnings.add('Локация ${location.id} без taskId.');
+        continue;
+      }
+      if (!taskIds.contains(location.taskId)) {
+        warnings
+            .add('Локация ${location.id} ссылается на отсутствующее задание.');
+      }
+    }
+
+    final usedTaskIds =
+        _locations.map((e) => e.taskId).where((e) => e.isNotEmpty).toSet();
+    for (final task in _tasks) {
+      if (!usedTaskIds.contains(task.id)) {
+        warnings.add('Задание ${task.id} не назначено ни одной локации.');
+      }
+    }
+
+    return warnings;
+  }
+
+  void _showQualityIssues(List<String> blocking, List<String> warnings) {
+    final all = <String>[
+      ...blocking.map((e) => 'Ошибка: $e'),
+      ...warnings.map((e) => 'Предупреждение: $e'),
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Проверка контента'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: all
+                    .map(
+                      (item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text('• $item'),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Закрыть'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildContentHealthBanner() {
+    final blocking = _collectBlockingIssues();
+    final warnings = _collectWarnings();
+
+    if (blocking.isEmpty && warnings.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final hasBlocking = blocking.isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: hasBlocking
+            ? AppColors.error.withValues(alpha: 0.08)
+            : AppColors.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: hasBlocking
+              ? AppColors.error.withValues(alpha: 0.35)
+              : AppColors.warning.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            hasBlocking ? Icons.error_outline : Icons.warning_amber_rounded,
+            size: 18,
+            color: hasBlocking ? AppColors.error : AppColors.warning,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              hasBlocking
+                  ? 'Найдены критические проблемы: ${blocking.length}. Сохранение недоступно.'
+                  : 'Есть предупреждения: ${warnings.length}. Рекомендуется проверить контент.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: hasBlocking ? AppColors.error : AppColors.warning,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _showQualityIssues(blocking, warnings),
+            child: const Text('Детали'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -322,6 +474,7 @@ class _AdminVisualQuestEditorScreenState
 
   @override
   Widget build(BuildContext context) {
+    final hasBlockingIssues = _collectBlockingIssues().isNotEmpty;
     return Scaffold(
       appBar: AppBar(
         title: Text('Визуальный редактор квеста'),
@@ -348,7 +501,7 @@ class _AdminVisualQuestEditorScreenState
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: FilledButton.icon(
-                onPressed: _saveQuest,
+                onPressed: hasBlockingIssues ? null : _saveQuest,
                 icon: const Icon(Icons.save_outlined, size: 18),
                 label: const Text('Сохранить'),
               ),
@@ -367,6 +520,7 @@ class _AdminVisualQuestEditorScreenState
                     Tab(icon: Icon(Icons.quiz), text: 'Задания'),
                   ],
                 ),
+                _buildContentHealthBanner(),
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,

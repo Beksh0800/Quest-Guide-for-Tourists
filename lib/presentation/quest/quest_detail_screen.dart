@@ -195,8 +195,7 @@ class _QuestDetailView extends StatelessWidget {
                       if (questStatus == QuestCatalogStatus.inProgress &&
                           canContinue)
                         PremiumButton(
-                          onPressed: () => context
-                              .push('/quest/${quest.id}/task/$continueIndex'),
+                          onPressed: () => context.push('/quest/${quest.id}/map'),
                           icon: Icons.play_arrow_rounded,
                           text: l10n.continueQuest,
                         )

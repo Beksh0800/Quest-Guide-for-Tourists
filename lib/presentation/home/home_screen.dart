@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:quest_guide/core/l10n/app_localizations.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:quest_guide/core/di/app_router.dart';
 import 'package:quest_guide/core/theme/app_theme.dart';
+import 'package:quest_guide/data/repositories/progress_repository.dart';
 import 'package:quest_guide/data/repositories/quest_repository.dart';
 import 'package:quest_guide/domain/models/quest_catalog_status.dart';
 import 'package:quest_guide/domain/models/quest.dart';
+import 'package:quest_guide/domain/models/quest_progress.dart';
 import 'package:quest_guide/presentation/home/cubit/quest_list_cubit.dart';
 import 'package:quest_guide/presentation/home/cubit/quest_list_state.dart';
 import 'package:quest_guide/presentation/common/loading_skeletons.dart';
@@ -22,70 +27,144 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  DateTime? _lastBackPressedAt;
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (_) =>
           QuestListCubit(questRepository: QuestRepository())..loadQuests(),
-      child: Scaffold(
-        body: IndexedStack(
-          index: _currentIndex,
-          children: const [
-            _QuestListTab(),
-            _MapTab(),
-            _ProfileTab(),
-          ],
-        ),
-        bottomNavigationBar: Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).navigationBarTheme.backgroundColor,
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.shadow.withValues(alpha: 0.05),
-                blurRadius: 20,
-                offset: const Offset(0, -5),
-              ),
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _handleBackPressed();
+        },
+        child: Scaffold(
+          body: IndexedStack(
+            index: _currentIndex,
+            children: const [
+              _QuestListTab(),
+              _MapTab(),
+              _ProfileTab(),
             ],
-            border: Border(
-              top: BorderSide(
-                color: Colors.white.withValues(alpha: 0.2),
-                width: 1,
+          ),
+          bottomNavigationBar: Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).navigationBarTheme.backgroundColor,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.shadow.withValues(alpha: 0.05),
+                  blurRadius: 20,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+              border: Border(
+                top: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  width: 1,
+                ),
               ),
             ),
-          ),
-          child: NavigationBar(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: (index) =>
-                setState(() => _currentIndex = index),
-            destinations: [
-              NavigationDestination(
-                icon: const Icon(Icons.explore_outlined),
-                selectedIcon: const Icon(Icons.explore_rounded),
-                label: AppLocalizations.of(context).homeTitle,
-              ),
-              NavigationDestination(
-                icon: const Icon(Icons.map_outlined),
-                selectedIcon: const Icon(Icons.map_rounded),
-                label: AppLocalizations.of(context).mapTitle,
-              ),
-              NavigationDestination(
-                icon: const Icon(Icons.person_outline_rounded),
-                selectedIcon: const Icon(Icons.person_rounded),
-                label: AppLocalizations.of(context).profileTitle,
-              ),
-            ],
+            child: NavigationBar(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (index) =>
+                  setState(() => _currentIndex = index),
+              destinations: [
+                NavigationDestination(
+                  icon: const Icon(Icons.explore_outlined),
+                  selectedIcon: const Icon(Icons.explore_rounded),
+                  label: AppLocalizations.of(context).homeTitle,
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.map_outlined),
+                  selectedIcon: const Icon(Icons.map_rounded),
+                  label: AppLocalizations.of(context).mapTitle,
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.person_outline_rounded),
+                  selectedIcon: const Icon(Icons.person_rounded),
+                  label: AppLocalizations.of(context).profileTitle,
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  void _handleBackPressed() {
+    if (_currentIndex != 0) {
+      setState(() => _currentIndex = 0);
+      return;
+    }
+
+    final now = DateTime.now();
+    if (_lastBackPressedAt == null ||
+        now.difference(_lastBackPressedAt!) > const Duration(seconds: 2)) {
+      _lastBackPressedAt = now;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Нажмите еще раз, чтобы выйти'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    SystemNavigator.pop();
+  }
 }
 
 // ==================== ВКЛАДКА КВЕСТОВ ====================
 
-class _QuestListTab extends StatelessWidget {
+class _QuestListTab extends StatefulWidget {
   const _QuestListTab();
+  @override
+  State<_QuestListTab> createState() => _QuestListTabState();
+}
+
+class _QuestListTabState extends State<_QuestListTab> {
+  final ProgressRepository _progressRepository = ProgressRepository();
+  late Future<QuestProgress?> _resumeProgressFuture;
+  String? _dismissedResumeProgressId;
+  @override
+  void initState() {
+    super.initState();
+    _resumeProgressFuture = _loadResumeProgress();
+  }
+
+  Future<QuestProgress?> _loadResumeProgress() async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) return null;
+    return _progressRepository.getLatestActiveProgressForUser(userId);
+  }
+
+  void _reloadAll() {
+    context.read<QuestListCubit>().loadQuests();
+    setState(() {
+      _resumeProgressFuture = _loadResumeProgress();
+    });
+  }
+
+  Quest? _findQuestById(List<Quest> quests, String questId) {
+    for (final quest in quests) {
+      if (quest.id == questId) return quest;
+    }
+    return null;
+  }
+
+  String _resolveResumeRoute(QuestProgress progress) {
+    switch (progress.currentStage) {
+      case QuestRunStage.task:
+        return '/quest/${progress.questId}/task/${progress.currentLocationIndex}';
+      case QuestRunStage.navigating:
+        return '/quest/${progress.questId}/map';
+      case QuestRunStage.completed:
+        return AppRoutes.home;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,7 +178,7 @@ class _QuestListTab extends StatelessWidget {
               actions: [
                 IconButton(
                   icon: const Icon(Icons.refresh_rounded),
-                  onPressed: () => context.read<QuestListCubit>().loadQuests(),
+                  onPressed: _reloadAll,
                 ),
               ],
             ),
@@ -116,8 +195,7 @@ class _QuestListTab extends StatelessWidget {
                       Text(state.message, textAlign: TextAlign.center),
                       const SizedBox(height: 16),
                       PremiumButton(
-                        onPressed: () =>
-                            context.read<QuestListCubit>().loadQuests(),
+                        onPressed: _reloadAll,
                         text: AppLocalizations.of(context).retry,
                       ),
                     ],
@@ -125,7 +203,95 @@ class _QuestListTab extends StatelessWidget {
                 ),
               ),
             if (state is QuestListLoaded) ...[
-              // Фильтр по городам
+              SliverToBoxAdapter(
+                child: FutureBuilder<QuestProgress?>(
+                  future: _resumeProgressFuture,
+                  builder: (context, snapshot) {
+                    final progress = snapshot.data;
+                    if (progress == null ||
+                        progress.status != QuestStatus.inProgress ||
+                        progress.id == _dismissedResumeProgressId) {
+                      return const SizedBox.shrink();
+                    }
+                    final l10n = AppLocalizations.of(context);
+                    final quest =
+                        _findQuestById(state.quests, progress.questId);
+                    final subtitle = quest != null
+                        ? '${l10n.homeResumeQuestSubtitle}: ${quest.title}'
+                        : l10n.homeResumeQuestSubtitle;
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                      child: GlassCard(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: AppColors.accent.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                Icons.play_circle_fill_rounded,
+                                color: AppColors.accent,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    l10n.homeResumeQuestTitle,
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    subtitle,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: AppColors.textSecondary,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  FilledButton.icon(
+                                    onPressed: () => context
+                                        .push(_resolveResumeRoute(progress)),
+                                    icon: const Icon(Icons.navigation_rounded,
+                                        size: 16),
+                                    label: Text(l10n.continueQuest),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _dismissedResumeProgressId = progress.id;
+                                });
+                              },
+                              tooltip: 'Hide',
+                              icon: const Icon(
+                                Icons.close_rounded,
+                                size: 18,
+                                color: AppColors.textHint,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // Filter by city
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -178,7 +344,6 @@ class _QuestListTab extends StatelessWidget {
                   ),
                 ),
               ),
-              // Список квестов
               if (state.filteredQuests.isEmpty)
                 SliverFillRemaining(
                   child: Center(
@@ -208,8 +373,6 @@ class _QuestListTab extends StatelessWidget {
     );
   }
 }
-
-// ==================== КАРТОЧКА КВЕСТА ====================
 
 class _QuestCard extends StatelessWidget {
   final Quest quest;
@@ -275,7 +438,8 @@ class _QuestCard extends StatelessWidget {
           children: [
             // Изображение / placeholder
             ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24)),
               child: SizedBox(
                 height: 140,
                 width: double.infinity,
@@ -508,41 +672,163 @@ class _MapTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.map_rounded,
-                size: 48,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              l10n.mapTitle,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              l10n.mapSelectQuestHint,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppColors.textSecondary,
+    return BlocBuilder<QuestListCubit, QuestListState>(
+      builder: (context, state) {
+        if (state is QuestListLoading || state is QuestListInitial) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (state is QuestListError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, color: AppColors.error),
+                  const SizedBox(height: 8),
+                  Text(state.message, textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                  PremiumButton(
+                    text: l10n.retry,
+                    onPressed: () =>
+                        context.read<QuestListCubit>().loadQuests(),
                   ),
+                ],
+              ),
             ),
+          );
+        }
+
+        final loaded = state as QuestListLoaded;
+        final inProgress = loaded.quests
+            .where(
+              (quest) =>
+                  loaded.statusForQuest(quest.id) ==
+                  QuestCatalogStatus.inProgress,
+            )
+            .toList(growable: false);
+
+        if (loaded.quests.isEmpty) {
+          return Center(child: Text(l10n.noQuests));
+        }
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+          children: [
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.map_rounded,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.mapRoute,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          inProgress.isEmpty
+                              ? l10n.mapSelectQuestHint
+                              : '${l10n.inProgress}: ${inProgress.length}',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (inProgress.isNotEmpty) ...[
+              ...inProgress.map((quest) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: GlassCard(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                quest.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${quest.city} • ${quest.distanceKm.toStringAsFixed(1)} ${l10n.kmLabel}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        FilledButton.icon(
+                          onPressed: () => context.go('/quest/${quest.id}/map'),
+                          icon: const Icon(Icons.navigation_rounded, size: 16),
+                          label: Text(l10n.mapTitle),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ] else ...[
+              GlassCard(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.mapSelectQuestHint,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: () =>
+                          context.push('/quest/${loaded.quests.first.id}'),
+                      icon: const Icon(Icons.explore_rounded, size: 16),
+                      label: Text(l10n.startQuest),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 }

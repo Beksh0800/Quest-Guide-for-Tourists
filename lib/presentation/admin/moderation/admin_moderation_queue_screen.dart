@@ -21,28 +21,29 @@ class AdminModerationQueueScreen extends StatefulWidget {
       _AdminModerationQueueScreenState();
 }
 
-class _AdminModerationQueueScreenState
-    extends State<AdminModerationQueueScreen> {
+class _AdminModerationQueueScreenState extends State<AdminModerationQueueScreen> {
   final ProgressRepository _progressRepository = ProgressRepository();
   final UserRepository _userRepository = UserRepository();
   final QuestRepository _questRepository = QuestRepository();
+
+  final Map<String, String> _userDisplayById = <String, String>{};
+  final Map<String, String> _questTitleById = <String, String>{};
+  final Map<String, String> _taskTitleByKey = <String, String>{};
 
   bool _loading = true;
   bool _actionInProgress = false;
   String? _error;
   List<QuestModerationQueueItem> _items = const <QuestModerationQueueItem>[];
-  final Map<String, String> _userDisplayById = <String, String>{};
-  final Map<String, String> _questTitleById = <String, String>{};
-  final Map<String, String> _taskTitleByKey = <String, String>{};
 
   @override
   void initState() {
     super.initState();
-    _loadQueue();
+    unawaited(_loadQueue());
   }
 
   Future<void> _loadQueue() async {
     if (!mounted) return;
+
     setState(() {
       _loading = true;
       _error = null;
@@ -50,12 +51,13 @@ class _AdminModerationQueueScreenState
 
     try {
       final items = await _progressRepository.getModerationQueue();
-
       if (!mounted) return;
+
       setState(() {
         _items = items;
         _loading = false;
       });
+
       unawaited(_hydrateReadableLabels(items));
     } catch (_) {
       if (!mounted) return;
@@ -71,6 +73,7 @@ class _AdminModerationQueueScreenState
 
     final users = <String>{};
     final quests = <String>{};
+
     for (final item in items) {
       users.add(item.userId);
       quests.add(item.questId);
@@ -91,7 +94,7 @@ class _AdminModerationQueueScreenState
           nextUsers[userId] = email;
         }
       } catch (_) {
-        // no-op: fallback to userId
+        // ignore and fallback to raw id
       }
     }
 
@@ -108,11 +111,11 @@ class _AdminModerationQueueScreenState
           for (final task in bundle.tasks) {
             final key = _taskKey(questId, task.id);
             final question = task.question.trim();
-            nextTasks[key] = question.isEmpty ? task.id : question;
+            nextTasks[key] = question.isNotEmpty ? question : task.id;
           }
         }
       } catch (_) {
-        // no-op: fallback to ids
+        // ignore and fallback to raw ids
       }
     }
 
@@ -136,156 +139,6 @@ class _AdminModerationQueueScreenState
 
   String _displayTask(QuestModerationQueueItem item) {
     return _taskTitleByKey[_taskKey(item.questId, item.taskId)] ?? item.taskId;
-  }
-
-  Future<void> _showDetails(QuestModerationQueueItem item) async {
-    final l10n = AppLocalizations.of(context);
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Подробности',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildPreview(item, l10n),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildDetailLine(l10n.adminModerationUserLabel, _displayUser(item)),
-                            _buildDetailLine('UID', item.userId),
-                            _buildDetailLine('Квест', _displayQuest(item)),
-                            _buildDetailLine('Quest ID', item.questId),
-                            _buildDetailLine('Задание', _displayTask(item)),
-                            _buildDetailLine('Task ID', item.taskId),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  _buildDetailLine(
-                    l10n.evidenceStatusLabel,
-                    _evidenceStatusText(item.evidenceStatus, l10n),
-                  ),
-                  _buildDetailLine(
-                    l10n.moderationStatusLabel,
-                    _moderationStatusText(item.moderationStatus, l10n),
-                  ),
-                  _buildDetailLine(
-                    l10n.adminModerationAnsweredAtLabel,
-                    _formatDateTime(item.answeredAt),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  File? _resolveLocalEvidenceFile(QuestModerationQueueItem item) {
-    final path = item.evidencePath;
-    if (path == null || path.trim().isEmpty) {
-      return null;
-    }
-    final file = File(path);
-    if (!file.existsSync()) {
-      return null;
-    }
-    return file;
-  }
-
-  String? _resolveRemoteEvidenceUrl(QuestModerationQueueItem item) {
-    final remoteUrl = item.evidenceRemoteUrl;
-    if (remoteUrl == null || remoteUrl.trim().isEmpty) {
-      return null;
-    }
-    final parsed = Uri.tryParse(remoteUrl);
-    if (parsed == null || parsed.scheme.isEmpty || !parsed.hasAbsolutePath) {
-      return null;
-    }
-    return remoteUrl;
-  }
-
-  Future<void> _openEvidenceImage(QuestModerationQueueItem item) async {
-    final file = _resolveLocalEvidenceFile(item);
-    final remoteUrl = _resolveRemoteEvidenceUrl(item);
-    if (file == null && remoteUrl == null) {
-      if (!mounted) return;
-      final l10n = AppLocalizations.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminModerationPreviewUnavailable)),
-      );
-      return;
-    }
-
-    await FullscreenImageViewer.show(
-      context,
-      file: file,
-      imageUrl: remoteUrl,
-    );
-  }
-
-  Widget _buildDetailLine(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: RichText(
-        text: TextSpan(
-          style: Theme.of(context).textTheme.bodyMedium,
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            TextSpan(text: value),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLabelValue({
-    required String label,
-    required String value,
-    int maxLines = 2,
-    TextStyle? valueStyle,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '$label: ',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            maxLines: maxLines,
-            overflow: TextOverflow.ellipsis,
-            style: valueStyle ?? Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
-      ],
-    );
   }
 
   String _resolveModeratorIdentity() {
@@ -329,7 +182,6 @@ class _AdminModerationQueueScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.adminModerationApprovedSuccess)),
       );
-
       unawaited(_loadQueue());
     } catch (_) {
       if (!mounted) return;
@@ -375,7 +227,6 @@ class _AdminModerationQueueScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.adminModerationRejectedSuccess)),
       );
-
       unawaited(_loadQueue());
     } catch (_) {
       if (!mounted) return;
@@ -403,28 +254,23 @@ class _AdminModerationQueueScreenState
           builder: (context, setStateDialog) {
             return AlertDialog(
               title: Text(l10n.adminModerationRejectDialogTitle),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: InputDecoration(
-                      labelText: l10n.adminModerationRejectReasonLabel,
-                      hintText: l10n.adminModerationRejectReasonHint,
-                      errorText: validationError,
-                    ),
-                  ),
-                ],
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                minLines: 2,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  labelText: l10n.adminModerationRejectReasonLabel,
+                  hintText: l10n.adminModerationRejectReasonHint,
+                  errorText: validationError,
+                ),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
                   child: Text(l10n.cancel),
                 ),
-                TextButton(
+                FilledButton(
                   onPressed: () {
                     final value = controller.text.trim();
                     if (value.isEmpty) {
@@ -436,10 +282,7 @@ class _AdminModerationQueueScreenState
                     }
                     Navigator.of(context).pop(value);
                   },
-                  child: Text(
-                    l10n.adminModerationReject,
-                    style: const TextStyle(color: AppColors.error),
-                  ),
+                  child: Text(l10n.adminModerationReject),
                 ),
               ],
             );
@@ -481,6 +324,78 @@ class _AdminModerationQueueScreenState
     }
   }
 
+  File? _resolveLocalEvidenceFile(QuestModerationQueueItem item) {
+    final path = item.evidencePath;
+    if (path == null || path.trim().isEmpty) {
+      return null;
+    }
+
+    final file = File(path);
+    if (!file.existsSync()) {
+      return null;
+    }
+
+    return file;
+  }
+
+  String? _resolveRemoteEvidenceUrl(QuestModerationQueueItem item) {
+    final remoteUrl = item.evidenceRemoteUrl;
+    if (remoteUrl == null || remoteUrl.trim().isEmpty) {
+      return null;
+    }
+
+    final parsed = Uri.tryParse(remoteUrl);
+    if (parsed == null || parsed.scheme.isEmpty || !parsed.hasAbsolutePath) {
+      return null;
+    }
+
+    return remoteUrl;
+  }
+
+  Future<void> _openEvidenceImage(QuestModerationQueueItem item) async {
+    final file = _resolveLocalEvidenceFile(item);
+    final remoteUrl = _resolveRemoteEvidenceUrl(item);
+
+    if (file == null && remoteUrl == null) {
+      if (!mounted) return;
+      final l10n = AppLocalizations.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.adminModerationPreviewUnavailable)),
+      );
+      return;
+    }
+
+    await FullscreenImageViewer.show(
+      context,
+      file: file,
+      imageUrl: remoteUrl,
+    );
+  }
+
+  Widget _buildMissingPreview(AppLocalizations l10n) {
+    return Container(
+      height: 78,
+      width: 78,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.divider),
+      ),
+      alignment: Alignment.center,
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Text(
+          l10n.adminModerationPreviewUnavailable,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 11,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPreview(QuestModerationQueueItem item, AppLocalizations l10n) {
     final file = _resolveLocalEvidenceFile(item);
     if (file != null) {
@@ -520,26 +435,30 @@ class _AdminModerationQueueScreenState
     return _buildMissingPreview(l10n);
   }
 
-  Widget _buildMissingPreview(AppLocalizations l10n) {
-    return Container(
-      height: 78,
-      width: 78,
-      decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.divider),
-      ),
-      alignment: Alignment.center,
-      child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: Text(
-          l10n.adminModerationPreviewUnavailable,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: AppColors.textSecondary,
+  Widget _buildLabelValue({
+    required String label,
+    required String value,
+    int maxLines = 2,
+    TextStyle? valueStyle,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$label: ',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
         ),
-      ),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+            style: valueStyle ?? Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      ],
     );
   }
 
@@ -567,8 +486,11 @@ class _AdminModerationQueueScreenState
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.error_outline_rounded,
-                            color: AppColors.error, size: 36),
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          color: AppColors.error,
+                          size: 36,
+                        ),
                         const SizedBox(height: 10),
                         Text(
                           _error!,
@@ -584,40 +506,29 @@ class _AdminModerationQueueScreenState
                   ),
                 )
               : _items.isEmpty
-                  ? Center(
-                      child: Text(
-                        l10n.adminModerationEmpty,
-                        textAlign: TextAlign.center,
-                      ),
-                    )
+                  ? Center(child: Text(l10n.adminModerationEmpty))
                   : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                       itemCount: _items.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
                         final item = _items[index];
 
-                        return Material(
-                          color: Colors.transparent,
-                          child: InkWell(
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
                             borderRadius: BorderRadius.circular(14),
-                            onTap: () => _showDetails(item),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 180),
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: AppColors.surface,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: AppColors.divider),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: AppColors.shadow,
-                                    blurRadius: 6,
-                                    offset: Offset(0, 2),
-                                  ),
-                                ],
+                            border: Border.all(color: AppColors.divider),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: AppColors.shadow,
+                                blurRadius: 6,
+                                offset: Offset(0, 2),
                               ),
-                              child: Column(
+                            ],
+                          ),
+                          child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
@@ -634,7 +545,10 @@ class _AdminModerationQueueScreenState
                                           _displayUser(item),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelMedium
+                                              ?.copyWith(
                                                 fontWeight: FontWeight.w700,
                                               ),
                                         ),
@@ -644,7 +558,6 @@ class _AdminModerationQueueScreenState
                                           value: _displayQuest(item),
                                           maxLines: 2,
                                         ),
-                                        const SizedBox(height: 2),
                                         _buildLabelValue(
                                           label: 'Задание',
                                           value: _displayTask(item),
@@ -653,23 +566,33 @@ class _AdminModerationQueueScreenState
                                         const SizedBox(height: 2),
                                         _buildLabelValue(
                                           label: l10n.evidenceStatusLabel,
-                                          value: _evidenceStatusText(item.evidenceStatus, l10n),
+                                          value: _evidenceStatusText(
+                                            item.evidenceStatus,
+                                            l10n,
+                                          ),
                                         ),
-                                        const SizedBox(height: 2),
+                                        _buildLabelValue(
+                                          label: l10n.moderationStatusLabel,
+                                          value: _moderationStatusText(
+                                            item.moderationStatus,
+                                            l10n,
+                                          ),
+                                          valueStyle: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                color: AppColors.accent,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                        ),
                                         _buildLabelValue(
                                           label: l10n.adminModerationAnsweredAtLabel,
                                           value: _formatDateTime(item.answeredAt),
-                                          valueStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          valueStyle: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
                                                 color: AppColors.textSecondary,
-                                              ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        _buildLabelValue(
-                                          label: l10n.moderationStatusLabel,
-                                          value: _moderationStatusText(item.moderationStatus, l10n),
-                                          valueStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                                color: AppColors.accent,
-                                                fontWeight: FontWeight.w600,
                                               ),
                                         ),
                                       ],
@@ -702,8 +625,6 @@ class _AdminModerationQueueScreenState
                                 ],
                               ),
                             ],
-                          ),
-                            ),
                           ),
                         );
                       },

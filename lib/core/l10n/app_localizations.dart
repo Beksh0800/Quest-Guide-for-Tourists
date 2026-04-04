@@ -7,7 +7,7 @@ enum AppLanguage {
   kz, // Қазақша
 }
 
-/// Класс локализации — содержит все строки приложения
+/// Class with all localized app strings.
 class AppLocalizations {
   final AppLanguage language;
 
@@ -69,6 +69,10 @@ class AppLocalizations {
   String get homeTitle => _t('Квесты', 'Квесттер');
   String get allCities => _t('Все города', 'Барлық қалалар');
   String get noQuests => _t('Нет доступных квестов', 'Қолжетімді квесттер жоқ');
+  String get homeResumeQuestTitle =>
+      _t('У вас есть незавершенный квест', 'Сізде аяқталмаған квест бар');
+  String get homeResumeQuestSubtitle =>
+      _t('Продолжить с места остановки', 'Тоқтаған жерден жалғастыру');
   String get searchQuests => _t('Поиск квестов...', 'Квесттерді іздеу...');
   String get filterByCity => _t('Фильтр по городу', 'Қала бойынша сүзу');
   String get questStatusNotStarted => _t('Не начат', 'Басталмаған');
@@ -256,8 +260,8 @@ class AppLocalizations {
   String mapDistanceToManeuver(int meters) =>
       _t('через $meters м', '$meters м кейін');
   String get mapUpcomingSteps => _t('Ближайшие шаги', 'Жақын қадамдар');
-  String get mapMetersLabel => _t('м', 'м');
-  String mapEtaMinutes(int minutes) => _t('$minutes мин', '$minutes мин');
+  String get mapMetersLabel => _t('Рј', 'Рј');
+  String mapEtaMinutes(int minutes) => _t('$minutes РјРёРЅ', '$minutes РјРёРЅ');
   String mapEtaHoursMinutes(int hours, int minutes) =>
       _t('$hours ч $minutes мин', '$hours сағ $minutes мин');
   String mapRemainingRoute(String distance, String eta) =>
@@ -288,7 +292,7 @@ class AppLocalizations {
   String get leaderboardTopLabel => _t('Топ игроков', 'Топ ойыншылар');
   String get leaderboardYourRank => _t('Ваше место', 'Сіздің орныңыз');
   String get leaderboardYou => _t('Вы', 'Сіз');
-  String get leaderboardUnranked => _t('—', '—');
+  String get leaderboardUnranked => _t('-', '-');
   String get leaderboardEmpty =>
       _t('Пока нет данных рейтинга', 'Рейтинг деректері әзірге жоқ');
   String get leaderboardLoadError =>
@@ -326,7 +330,7 @@ class AppLocalizations {
   String time(String t) => _t('Время: $t', 'Уақыт: $t');
   String durationHoursMinutes(int hours, int minutes) =>
       _t('$hoursч $minutesм', '$hoursсағ $minutesмин');
-  String durationMinutes(int minutes) => _t('$minutesм', '$minutesмин');
+  String durationMinutes(int minutes) => _t('$minutesРј', '$minutesРјРёРЅ');
   String get pageNotFound => _t('Страница не найдена', 'Бет табылмады');
 
   // ───────── Admin Content ─────────
@@ -450,6 +454,24 @@ class AppLocalizations {
   String get adminEvidenceLoadError => _t(
       'Не удалось загрузить статусы evidence',
       'Evidence күйлерін жүктеу мүмкін болмады');
+  String get adminUserStatsTitle => _t('User statistics', 'User statistics');
+  String get adminUserStatsOpen => _t('User statistics', 'User statistics');
+  String get adminUserStatsTotalUsers => _t('Total users', 'Total users');
+  String get adminUserStatsActiveRuns => _t('Active runs', 'Active runs');
+  String get adminUserStatsCompletedRuns =>
+      _t('Completed runs', 'Completed runs');
+  String get adminUserStatsTodayCompletions =>
+      _t('Today completions', 'Today completions');
+  String get adminUserStatsTopUsers => _t('Top users', 'Top users');
+  String get adminUserStatsCitiesCoverage =>
+      _t('Cities coverage', 'Cities coverage');
+  String get adminUserStatsRecentActivity =>
+      _t('Recent activity', 'Recent activity');
+  String get adminUserStatsNoRecent =>
+      _t('No recent activity', 'No recent activity');
+  String get adminUserStatsNoUsers => _t('No users data', 'No users data');
+  String get adminUserStatsLoadError =>
+      _t('Failed to load statistics', 'Failed to load statistics');
   String get adminModerationQueueTitle =>
       _t('Очередь модерации', 'Модерация кезегі');
   String get adminModerationQueueOpen =>

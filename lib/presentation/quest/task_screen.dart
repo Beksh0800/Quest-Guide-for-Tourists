@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:quest_guide/core/di/app_router.dart';
 import 'package:quest_guide/core/l10n/app_localizations.dart';
 import 'package:quest_guide/core/theme/app_theme.dart';
 import 'package:quest_guide/data/repositories/progress_repository.dart';
@@ -32,7 +34,7 @@ class TaskScreen extends StatefulWidget {
   State<TaskScreen> createState() => _TaskScreenState();
 }
 
-class _TaskScreenState extends State<TaskScreen> {
+class _TaskScreenState extends State<TaskScreen> with WidgetsBindingObserver {
   final _questRepo = QuestRepository();
   final _progressRepo = ProgressRepository();
   final _imagePicker = ImagePicker();
@@ -70,9 +72,57 @@ class _TaskScreenState extends State<TaskScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final routeIndex = int.tryParse(widget.locationIndex) ?? 0;
     _currentIndex = routeIndex < 0 ? 0 : routeIndex;
     _bootstrap();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_restoreQuestRunOnResume());
+    }
+  }
+
+  Future<void> _restoreQuestRunOnResume() async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null || _locations.isEmpty) return;
+
+    final progress =
+        await _progressRepo.getActiveProgress(userId, widget.questId);
+    if (!mounted || progress == null) return;
+
+    if (progress.currentStage == QuestRunStage.navigating) {
+      context.go('/quest/${widget.questId}/map');
+      return;
+    }
+
+    final nextIndex =
+        progress.currentLocationIndex.clamp(0, _locations.length - 1);
+    final indexChanged = nextIndex != _currentIndex;
+
+    _bindProgress(progress);
+
+    if (!indexChanged) {
+      if (mounted) {
+        setState(() {
+          _restoreTaskState(_currentTask);
+        });
+      }
+      return;
+    }
+
+    final task = await _loadTaskForCurrentIndex(_locations, nextIndex);
+    if (!mounted) return;
+
+    setState(() {
+      _currentIndex = nextIndex;
+      _currentTask = task;
+      _loading = false;
+      _error = null;
+      _restoreTaskState(task);
+    });
   }
 
   Future<void> _bootstrap() async {
@@ -102,7 +152,20 @@ class _TaskScreenState extends State<TaskScreen> {
           userId: userId,
           questId: widget.questId,
           initialLocationIndex: requestedIndex,
+          initialStage: QuestRunStage.navigating,
         );
+
+        if (progress.currentStage == QuestRunStage.navigating) {
+          if (!mounted) return;
+          context.go('/quest/${widget.questId}/map');
+          return;
+        }
+
+        progress = await _progressRepo.transitionToTask(
+              progressId: progress.id,
+              locationIndex: requestedIndex,
+            ) ??
+            progress;
 
         _bindProgress(progress);
 
@@ -231,6 +294,7 @@ class _TaskScreenState extends State<TaskScreen> {
       totalAnswers: _totalAnswers,
       completedTaskIds: _completedTaskIds.toList(),
       taskAnswers: Map<String, QuestTaskAnswer>.from(_taskAnswers),
+      currentStage: QuestRunStage.task,
       lastUpdatedAt: DateTime.now(),
     );
 
@@ -1035,51 +1099,40 @@ class _TaskScreenState extends State<TaskScreen> {
 
     if (_currentIndex + 1 >= _locations.length) {
       final progressId = _progress?.id;
+      if (progressId != null && progressId.isNotEmpty) {
+        await _progressRepo.transitionToTask(
+          progressId: progressId,
+          locationIndex: _currentIndex,
+        );
+      }
+      if (!mounted) return;
       context.go(
         '/quest/${widget.questId}/complete?score=$_totalScore&total=${_locations.length}&progressId=${progressId ?? ''}&correct=$_correctAnswers&answers=$_totalAnswers',
       );
       return;
     }
 
-    setState(() {
-      _currentIndex += 1;
-      _loading = true;
-      _answered = false;
-      _selectedAnswer = null;
-      _textController.clear();
-      _selectedEvidencePath = null;
-      _selectedEvidenceStatus = null;
-      _selectedEvidenceRemotePath = null;
-      _selectedEvidenceRemoteUrl = null;
-      _selectedEvidenceErrorCode = null;
-      _selectedModerationStatus = null;
-      _selectedModerationComment = null;
-      _selectedModeratedAt = null;
-      _selectedModeratedBy = null;
-      _evidenceError = null;
-    });
+    final nextIndex = _currentIndex + 1;
+    final progressId = _progress?.id;
+    if (progressId != null && progressId.isNotEmpty) {
+      await _progressRepo.transitionToNavigating(
+        progressId: progressId,
+        locationIndex: nextIndex,
+      );
 
-    await _persistProgress();
-
-    try {
-      final task = await _loadTaskForCurrentIndex(_locations, _currentIndex);
-      if (!mounted) return;
-      setState(() {
-        _currentTask = task;
-        _loading = false;
-        _restoreTaskState(task);
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = '${AppLocalizations.of(context).error}: $e';
-      });
+      final refreshed = await _progressRepo.getProgressById(progressId);
+      if (refreshed != null) {
+        _bindProgress(refreshed);
+      }
     }
+
+    if (!mounted) return;
+    context.go('/quest/${widget.questId}/map');
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _textController.dispose();
     super.dispose();
   }
@@ -1087,13 +1140,27 @@ class _TaskScreenState extends State<TaskScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _goHome();
+        },
+        child: const Scaffold(body: Center(child: CircularProgressIndicator())),
+      );
     }
 
     if (_error != null) {
-      return Scaffold(
-        appBar: AppBar(),
-        body: Center(child: Text(_error!)),
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _goHome();
+        },
+        child: Scaffold(
+          appBar: AppBar(),
+          body: Center(child: Text(_error!)),
+        ),
       );
     }
 
@@ -1102,183 +1169,205 @@ class _TaskScreenState extends State<TaskScreen> {
     final task = _currentTask;
     final l10n = AppLocalizations.of(context);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.pointOf(_currentIndex + 1, _locations.length)),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Row(
-              children: [
-                const Icon(Icons.star_rounded,
-                    color: AppColors.warning, size: 18),
-                const SizedBox(width: 4),
-                Text('$_totalScore ${l10n.pointsLabel}',
-                    style: Theme.of(context).textTheme.labelLarge),
-              ],
-            ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _goHome();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.home_rounded),
+            onPressed: _goHome,
+            tooltip: AppLocalizations.of(context).homeTitle,
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            LinearProgressIndicator(
-              value: (_currentIndex + 1) / _locations.length,
-              backgroundColor: AppColors.divider,
-              color: AppColors.primary,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            const SizedBox(height: 20),
-            if (location != null) ...[
-              GlassCard(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    const Icon(Icons.location_on_rounded,
-                        color: AppColors.primary),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(location.name,
-                              style: Theme.of(context).textTheme.titleMedium),
-                          const SizedBox(height: 4),
-                          Text(location.description,
-                              style: Theme.of(context).textTheme.bodySmall),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+          title: Text(l10n.pointOf(_currentIndex + 1, _locations.length)),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Row(
+                children: [
+                  const Icon(Icons.star_rounded,
+                      color: AppColors.warning, size: 18),
+                  const SizedBox(width: 4),
+                  Text('$_totalScore ${l10n.pointsLabel}',
+                      style: Theme.of(context).textTheme.labelLarge),
+                ],
               ),
-              if (location.historicalInfo.isNotEmpty) ...[
-                const SizedBox(height: 16),
+            ),
+          ],
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LinearProgressIndicator(
+                value: (_currentIndex + 1) / _locations.length,
+                backgroundColor: AppColors.divider,
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              const SizedBox(height: 20),
+              if (location != null) ...[
                 GlassCard(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(16),
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.info_outline_rounded,
-                          size: 18, color: AppColors.primary),
+                      const Icon(Icons.location_on_rounded,
+                          color: AppColors.primary),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Text(location.historicalInfo,
-                            style: Theme.of(context).textTheme.bodyMedium),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(location.name,
+                                style: Theme.of(context).textTheme.titleMedium),
+                            const SizedBox(height: 4),
+                            Text(location.description,
+                                style: Theme.of(context).textTheme.bodySmall),
+                          ],
+                        ),
                       ),
                     ],
                   ),
                 ),
-              ],
-              if (location.audioUrl != null &&
-                  location.audioUrl!.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                AudioGuidePlayer(audioUrl: location.audioUrl!),
-              ],
-            ],
-            const SizedBox(height: 24),
-            if (task != null) ...[
-              Text(l10n.taskLabel,
-                  style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 8),
-              Text(task.question,
-                  style: Theme.of(context).textTheme.titleLarge),
-              if (task.hint != null && task.hint!.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  '${l10n.hintLabel}: ${task.hint}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontStyle: FontStyle.italic,
-                        color: AppColors.textSecondary,
-                      ),
-                ),
-              ],
-              const SizedBox(height: 20),
-              if (task.type == TaskType.quiz && task.options.isNotEmpty) ...[
-                ...task.options.asMap().entries.map(
-                      (entry) => _AnswerOption(
-                        index: entry.key,
-                        text: entry.value,
-                        isSelected: _selectedAnswer == entry.key,
-                        isCorrect: entry.key == task.correctOptionIndex,
-                        isAnswered: _answered,
-                        onTap: () => _onAnswerSelected(entry.key),
-                      ),
-                    ),
-              ],
-              if (task.type == TaskType.textInput ||
-                  task.type == TaskType.riddle) ...[
-                CustomTextField(
-                  controller: _textController,
-                  enabled: !_answered,
-                  hintText: l10n.enterAnswer,
-                  suffixIcon: !_answered
-                      ? IconButton(
-                          icon: const Icon(Icons.send_rounded,
-                              color: AppColors.primary),
-                          onPressed: _onTextSubmitted,
-                        )
-                      : null,
-                ),
-                if (_answered) ...[
-                  const SizedBox(height: 12),
-                  _AnswerResultBanner(
-                    isCorrect: _currentTask!
-                        .checkAnswer(textAnswer: _textController.text.trim()),
-                    successText: l10n.correctAnswer(_currentTask!.points),
-                    failureText:
-                        '${l10n.wrongAnswer}. ${l10n.correctAnswerIs}: ${_currentTask!.correctAnswer ?? "—"}',
-                  ),
-                ],
-              ],
-              if (task.type == TaskType.photo ||
-                  task.type == TaskType.findObject) ...[
-                _buildEvidenceSection(task, l10n),
-              ],
-              const SizedBox(height: 24),
-              if (_answered) ...[
-                if (task.type == TaskType.quiz)
-                  _AnswerResultBanner(
-                    isCorrect: _selectedAnswer == task.correctOptionIndex,
-                    successText: l10n.correctAnswer(task.points),
-                    failureText: l10n.wrongAnswer,
-                  ),
-                if (_canShowPendingReviewBanner(task)) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.accent.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: AppColors.accent.withValues(alpha: 0.35),
-                      ),
-                    ),
+                if (location.historicalInfo.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  GlassCard(
+                    padding: const EdgeInsets.all(14),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(
-                          Icons.hourglass_top_rounded,
-                          size: 18,
-                          color: AppColors.accent,
-                        ),
-                        const SizedBox(width: 8),
+                        const Icon(Icons.info_outline_rounded,
+                            size: 18, color: AppColors.primary),
+                        const SizedBox(width: 10),
                         Expanded(
-                          child: Text(
-                            l10n.moderationPendingReviewMessage,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: AppColors.textPrimary),
-                          ),
+                          child: Text(location.historicalInfo,
+                              style: Theme.of(context).textTheme.bodyMedium),
                         ),
                       ],
                     ),
                   ),
                 ],
+                if (location.audioUrl != null &&
+                    location.audioUrl!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  AudioGuidePlayer(audioUrl: location.audioUrl!),
+                ],
+              ],
+              const SizedBox(height: 24),
+              if (task != null) ...[
+                Text(l10n.taskLabel,
+                    style: Theme.of(context).textTheme.bodyMedium),
+                const SizedBox(height: 8),
+                Text(task.question,
+                    style: Theme.of(context).textTheme.titleLarge),
+                if (task.hint != null && task.hint!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '${l10n.hintLabel}: ${task.hint}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontStyle: FontStyle.italic,
+                          color: AppColors.textSecondary,
+                        ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                if (task.type == TaskType.quiz && task.options.isNotEmpty) ...[
+                  ...task.options.asMap().entries.map(
+                        (entry) => _AnswerOption(
+                          index: entry.key,
+                          text: entry.value,
+                          isSelected: _selectedAnswer == entry.key,
+                          isCorrect: entry.key == task.correctOptionIndex,
+                          isAnswered: _answered,
+                          onTap: () => _onAnswerSelected(entry.key),
+                        ),
+                      ),
+                ],
+                if (task.type == TaskType.textInput ||
+                    task.type == TaskType.riddle) ...[
+                  CustomTextField(
+                    controller: _textController,
+                    enabled: !_answered,
+                    hintText: l10n.enterAnswer,
+                    suffixIcon: !_answered
+                        ? IconButton(
+                            icon: const Icon(Icons.send_rounded,
+                                color: AppColors.primary),
+                            onPressed: _onTextSubmitted,
+                          )
+                        : null,
+                  ),
+                  if (_answered) ...[
+                    const SizedBox(height: 12),
+                    _AnswerResultBanner(
+                      isCorrect: _currentTask!
+                          .checkAnswer(textAnswer: _textController.text.trim()),
+                      successText: l10n.correctAnswer(_currentTask!.points),
+                      failureText:
+                          '${l10n.wrongAnswer}. ${l10n.correctAnswerIs}: ${_currentTask!.correctAnswer ?? "—"}',
+                    ),
+                  ],
+                ],
+                if (task.type == TaskType.photo ||
+                    task.type == TaskType.findObject) ...[
+                  _buildEvidenceSection(task, l10n),
+                ],
+                const SizedBox(height: 24),
+                if (_answered) ...[
+                  if (task.type == TaskType.quiz)
+                    _AnswerResultBanner(
+                      isCorrect: _selectedAnswer == task.correctOptionIndex,
+                      successText: l10n.correctAnswer(task.points),
+                      failureText: l10n.wrongAnswer,
+                    ),
+                  if (_canShowPendingReviewBanner(task)) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppColors.accent.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.hourglass_top_rounded,
+                            size: 18,
+                            color: AppColors.accent,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              l10n.moderationPendingReviewMessage,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: AppColors.textPrimary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  PremiumButton(
+                    text: _currentIndex + 1 >= _locations.length
+                        ? l10n.finishQuest
+                        : l10n.nextPoint,
+                    onPressed: _goNext,
+                  ),
+                ],
+              ],
+              if (task == null && location != null) ...[
+                Text(l10n.noTask),
                 const SizedBox(height: 20),
                 PremiumButton(
                   text: _currentIndex + 1 >= _locations.length
@@ -1288,20 +1377,15 @@ class _TaskScreenState extends State<TaskScreen> {
                 ),
               ],
             ],
-            if (task == null && location != null) ...[
-              Text(l10n.noTask),
-              const SizedBox(height: 20),
-              PremiumButton(
-                text: _currentIndex + 1 >= _locations.length
-                    ? l10n.finishQuest
-                    : l10n.nextPoint,
-                onPressed: _goNext,
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  void _goHome() {
+    if (!mounted) return;
+    context.go(AppRoutes.home);
   }
 }
 

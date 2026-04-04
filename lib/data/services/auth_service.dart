@@ -31,6 +31,10 @@ class AuthService {
         _firestore = firestore ?? FirebaseFirestore.instance,
         _googleSignIn = googleSignIn ?? GoogleSignIn.instance;
 
+  UserModel? _cachedUserModel;
+  DateTime? _cachedUserModelAt;
+  static const Duration _userModelCacheTtl = Duration(seconds: 30);
+
   /// Текущий пользователь Firebase
   User? get currentUser => _auth.currentUser;
 
@@ -38,11 +42,9 @@ class AuthService {
   Stream<User?> get authStateChanges => _auth.authStateChanges();
 
   Future<bool> isCurrentUserAdmin() async {
-    final user = currentUser;
-    if (user == null) return false;
-
     try {
-      final model = await _getUserModel(user.uid);
+      final model = await getCurrentUserModel();
+      if (model == null) return false;
       return AccessControl.hasAdminAccess(
         isAdminFlag: model.isAdmin,
         role: model.role,
@@ -55,11 +57,9 @@ class AuthService {
   }
 
   Future<bool> isCurrentUserSuperuser() async {
-    final user = currentUser;
-    if (user == null) return false;
-
     try {
-      final model = await _getUserModel(user.uid);
+      final model = await getCurrentUserModel();
+      if (model == null) return false;
       return AccessControl.isSuperuserRole(model.role);
     } on FirebaseException {
       return false;
@@ -186,12 +186,17 @@ class AuthService {
   Future<void> signOut() async {
     await _googleSignIn.signOut();
     await _auth.signOut();
+    _cachedUserModel = null;
+    _cachedUserModelAt = null;
   }
 
   /// Получить модель текущего пользователя
   Future<UserModel?> getCurrentUserModel() async {
     final user = currentUser;
     if (user == null) return null;
+    if (_isCachedUserModelValidFor(user.uid)) {
+      return _cachedUserModel;
+    }
     return _getUserModel(user.uid);
   }
 
@@ -199,10 +204,14 @@ class AuthService {
   Future<void> updateUserProfile(UserModel user) async {
     await _firestore.collection('users').doc(user.id).update(user.toMap());
     await _upsertLeaderboardProfile(user);
+    _cacheUserModel(user);
   }
 
   /// Приватный метод — получить UserModel из Firestore
   Future<UserModel> _getUserModel(String uid) async {
+    if (_isCachedUserModelValidFor(uid)) {
+      return _cachedUserModel!;
+    }
     try {
       final doc = await _firestore.collection('users').doc(uid).get();
       if (!doc.exists) {
@@ -214,6 +223,7 @@ class AuthService {
       }
       final userModel = UserModel.fromMap(doc.data()!, uid);
       await _upsertLeaderboardProfile(userModel);
+      _cacheUserModel(userModel);
       return userModel;
     } on FirebaseException catch (e) {
       final fbUser = _auth.currentUser;
@@ -223,7 +233,9 @@ class AuthService {
         _logAuthStep(
           'Firestore unavailable while loading user model (code=${e.code}); using FirebaseAuth fallback',
         );
-        return _buildUserModelFromFirebaseUser(fbUser);
+        final fallback = _buildUserModelFromFirebaseUser(fbUser);
+        _cacheUserModel(fallback);
+        return fallback;
       }
       rethrow;
     }
@@ -239,6 +251,7 @@ class AuthService {
             .doc(user.uid)
             .set(userModel.toMap());
         await _upsertLeaderboardProfile(userModel);
+        _cacheUserModel(userModel);
         _logAuthStep('User profile created in Firestore');
         return userModel;
       }
@@ -246,13 +259,16 @@ class AuthService {
       _logAuthStep('User profile loaded from Firestore');
       final userModel = UserModel.fromMap(doc.data()!, user.uid);
       await _upsertLeaderboardProfile(userModel);
+      _cacheUserModel(userModel);
       return userModel;
     } on FirebaseException catch (e) {
       if (_isRecoverableFirestoreException(e)) {
         _logAuthStep(
           'Firestore unavailable while syncing profile (code=${e.code}); using FirebaseAuth fallback',
         );
-        return _buildUserModelFromFirebaseUser(user);
+        final fallback = _buildUserModelFromFirebaseUser(user);
+        _cacheUserModel(fallback);
+        return fallback;
       }
       rethrow;
     }
@@ -273,6 +289,19 @@ class AuthService {
         (e.code == 'permission-denied' ||
             e.code == 'failed-precondition' ||
             e.code == 'unavailable');
+  }
+
+  bool _isCachedUserModelValidFor(String uid) {
+    final cached = _cachedUserModel;
+    final cachedAt = _cachedUserModelAt;
+    if (cached == null || cachedAt == null) return false;
+    if (cached.id != uid) return false;
+    return DateTime.now().difference(cachedAt) <= _userModelCacheTtl;
+  }
+
+  void _cacheUserModel(UserModel model) {
+    _cachedUserModel = model;
+    _cachedUserModelAt = DateTime.now();
   }
 
   Future<void> _upsertLeaderboardProfile(UserModel user) async {

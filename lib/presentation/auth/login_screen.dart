@@ -103,10 +103,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     hintText: l10n.email,
                     prefixIcon: Icons.email_outlined,
                     validator: (value) {
-                      if (value == null || value.isEmpty)
+                      if (value == null || value.isEmpty) {
                         return l10n.validationEnterEmail;
-                      if (!value.contains('@'))
+                      }
+                      if (!value.contains('@')) {
                         return l10n.validationInvalidEmail;
+                      }
                       return null;
                     },
                   ),
@@ -119,9 +121,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     hintText: l10n.password,
                     prefixIcon: Icons.lock_outline,
                     validator: (value) {
-                      if (value == null || value.isEmpty)
+                      if (value == null || value.isEmpty) {
                         return l10n.validationEnterPassword;
-                      if (value.length < 6) return l10n.validationPasswordMin;
+                      }
+                      if (value.length < 6) {
+                        return l10n.validationPasswordMin;
+                      }
                       return null;
                     },
                   ),

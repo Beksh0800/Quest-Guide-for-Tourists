@@ -5,14 +5,14 @@ import 'package:quest_guide/data/services/road_routing_service.dart';
 import 'package:quest_guide/domain/models/navigation_route.dart';
 
 void main() {
-  group('GoogleDirectionsRoutingService routing', () {
+  group('GoogleDirectionsRoutingService', () {
     test('parses route and steps from successful Directions response',
         () async {
       final mockClient = MockClient((request) async {
         expect(
           request.url.queryParameters['mode'],
           'walking',
-          reason: 'Route mode must be walking for in-app pedestrian nav',
+          reason: 'Default route mode must be walking for in-app nav',
         );
         expect(request.url.queryParameters['language'], 'ru');
         expect(request.url.queryParameters['key'], 'test-key');

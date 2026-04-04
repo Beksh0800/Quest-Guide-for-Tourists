@@ -40,6 +40,7 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
     });
 
     final route = AppRoutes.adminQuestEditor.replaceFirst(':questId', questId);
+
     try {
       await context.push(route);
       if (!mounted) return;
@@ -65,7 +66,6 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
     try {
       final bundle = await _questRepository.createDraftQuest();
       if (!mounted) return;
-
       await _openEditor(bundle.quest.id);
     } catch (_) {
       if (!mounted) return;
@@ -83,6 +83,7 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
 
   Future<void> _deleteQuest(Quest quest) async {
     final l10n = AppLocalizations.of(context);
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -128,8 +129,6 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
     }
   }
 
-  // Popup "Подробнее" intentionally removed: list uses direct actions only.
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
@@ -170,8 +169,11 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.error_outline_rounded,
-                        color: AppColors.error, size: 36),
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: AppColors.error,
+                      size: 36,
+                    ),
                     const SizedBox(height: 10),
                     Text(
                       l10n.adminQuestEditorLoadError,
@@ -228,9 +230,9 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
                             children: [
                               Text(
                                 quest.title,
+                                style: Theme.of(context).textTheme.titleMedium,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleMedium,
                               ),
                               const SizedBox(height: 4),
                               Text(
@@ -342,7 +344,9 @@ class _AdminContentScreenState extends State<AdminContentScreen> {
                                   )
                                 : const Icon(Icons.edit_outlined),
                             label: Text(
-                              isOpeningQuest ? l10n.loading : l10n.adminEditQuest,
+                              isOpeningQuest
+                                  ? l10n.loading
+                                  : l10n.adminEditQuest,
                             ),
                           ),
                           OutlinedButton.icon(

@@ -30,11 +30,6 @@ class ProfileScreen extends StatelessWidget {
         final isSuperuser =
             user != null && AccessControl.isSuperuserRole(user.role);
 
-        // Временная отладка - выводим статус админа в консоль
-        if (user != null) {
-          debugPrint(
-              'User: ${user.name}, isAdmin: ${user.isAdmin}, role: ${user.role}, hasAdminAccess: $isAdmin, isSuperuser: $isSuperuser');
-        }
         final deniedByRouter = GoRouterState.of(context)
                 .uri
                 .queryParameters[AppRoutes.adminDeniedQueryParam] ==
@@ -128,7 +123,7 @@ class ProfileScreen extends StatelessWidget {
                               color: AppColors.accent.withValues(alpha: 0.3)),
                         ),
                         child: Text(
-                          '👑 Суперпользователь',
+                          'Суперпользователь',
                           style:
                               Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: AppColors.accent,
@@ -148,7 +143,7 @@ class ProfileScreen extends StatelessWidget {
                               color: AppColors.primary.withValues(alpha: 0.3)),
                         ),
                         child: Text(
-                          '⚡ Администратор',
+                          'Администратор',
                           style:
                               Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: AppColors.primary,
@@ -219,19 +214,26 @@ class ProfileScreen extends StatelessWidget {
                                   .adminContentTitle,
                               onTap: () => context.push(AppRoutes.adminContent),
                             ),
+                            _MenuItem(
+                              icon: Icons.analytics_outlined,
+                              title: AppLocalizations.of(context)
+                                  .adminUserStatsOpen,
+                              onTap: () =>
+                                  context.push(AppRoutes.adminUserStats),
+                            ),
                             if (isSuperuser)
                               _MenuItem(
                                 icon: Icons.fact_check_outlined,
                                 title: AppLocalizations.of(context)
                                     .adminModerationQueueOpen,
-                                onTap: () =>
-                                    context.push(AppRoutes.adminModerationQueue),
+                                onTap: () => context
+                                    .push(AppRoutes.adminModerationQueue),
                               ),
                           ] else ...[
                             // Временная кнопка для получения админ прав
                             _MenuItem(
                               icon: Icons.admin_panel_settings,
-                              title: '🔑 Получить админ права',
+                              title: 'Получить админ права',
                               subtitle: 'Временная функция для разработки',
                               onTap: () {
                                 final userId = user?.id;

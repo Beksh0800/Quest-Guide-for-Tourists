@@ -63,16 +63,36 @@ class UserModel extends Equatable {
       questsCompleted: map['questsCompleted'] as int? ?? 0,
       earnedBadgeIds: List<String>.from(map['earnedBadgeIds'] ?? []),
       language: map['language'] as String? ?? 'ru',
-      createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
+      createdAt: _parseDateTime(map['createdAt']) ?? DateTime.now(),
       photosUploaded: map['photosUploaded'] as int? ?? 0,
       visitedCities: List<String>.from(map['visitedCities'] ?? []),
       reviewsLeft: map['reviewsLeft'] as int? ?? 0,
-      lastCompletedQuestAt: map['lastCompletedQuestAt'] != null
-          ? DateTime.tryParse(map['lastCompletedQuestAt'] as String)
-          : null,
+      lastCompletedQuestAt: _parseDateTime(map['lastCompletedQuestAt']),
       currentQuestStreakDays: map['currentQuestStreakDays'] as int? ?? 0,
       completedQuestIds: List<String>.from(map['completedQuestIds'] ?? []),
     );
+  }
+
+  static DateTime? _parseDateTime(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw);
+    if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+    if (raw is Map<String, dynamic>) {
+      final seconds = raw['_seconds'] as int?;
+      if (seconds != null) {
+        return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+      }
+    }
+
+    try {
+      final dynamic toDate = (raw as dynamic).toDate();
+      if (toDate is DateTime) return toDate;
+    } catch (_) {
+      // ignore and fallback below
+    }
+
+    return DateTime.tryParse(raw.toString());
   }
 
   /// В Firestore документ

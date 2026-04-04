@@ -23,6 +23,7 @@ class QuestDetailCubit extends Cubit<QuestDetailState> {
   Future<void> loadQuest(String questId) async {
     final requestId = ++_activeRequestId;
     _emitIfActive(requestId, const QuestDetailLoading());
+
     try {
       final quest = await _questRepository.getQuestById(questId);
       if (quest == null) {
@@ -46,13 +47,16 @@ class QuestDetailCubit extends Cubit<QuestDetailState> {
         questId: questId,
       );
 
-      _emitIfActive(requestId, QuestDetailLoaded(
-        quest: quest,
-        locations: locations,
-        tasks: tasks,
-        questStatus: status,
-        activeProgress: activeProgress,
-      ));
+      _emitIfActive(
+        requestId,
+        QuestDetailLoaded(
+          quest: quest,
+          locations: locations,
+          tasks: tasks,
+          questStatus: status,
+          activeProgress: activeProgress,
+        ),
+      );
     } catch (e) {
       _emitIfActive(requestId, QuestDetailError('load_error:$e'));
     }

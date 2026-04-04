@@ -43,6 +43,16 @@ void main() {
       expect(progress.currentLocationIndex, 2);
     });
 
+    test('startQuest stores initial stage', () async {
+      final progress = await repo.startQuest(
+        userId: 'u1',
+        questId: 'q1',
+        initialStage: QuestRunStage.task,
+      );
+
+      expect(progress.currentStage, QuestRunStage.task);
+    });
+
     test('getActiveProgress returns active progress', () async {
       await repo.startQuest(userId: 'u1', questId: 'q1');
 
@@ -56,6 +66,24 @@ void main() {
     test('getActiveProgress returns null when no active progress', () async {
       final active = await repo.getActiveProgress('u1', 'q_nonexistent');
       expect(active, isNull);
+    });
+
+    test('getLatestActiveProgressForUser returns most recently updated run',
+        () async {
+      final first = await repo.startQuest(userId: 'u1', questId: 'q_old');
+      final second = await repo.startQuest(userId: 'u1', questId: 'q_new');
+
+      await repo.updateProgress(
+        first.copyWith(lastUpdatedAt: DateTime(2026, 1, 1, 10, 0, 0)),
+      );
+      await repo.updateProgress(
+        second.copyWith(lastUpdatedAt: DateTime(2026, 1, 1, 11, 0, 0)),
+      );
+
+      final latest = await repo.getLatestActiveProgressForUser('u1');
+
+      expect(latest, isNotNull);
+      expect(latest!.questId, 'q_new');
     });
 
     test('updateProgress persists changes', () async {
